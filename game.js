@@ -161,8 +161,8 @@ function dropLoot(enemyX, enemyY) {
 }
 
 /* SISTEMA DE SPAWN DE INIMIGOS */
-const MAX_ENEMIES = 200;
-const ENEMY_SPAWN_COUNT = 10;
+const MAX_ENEMIES = 400;
+const ENEMY_SPAWN_COUNT = 100;
 const ENEMY_SPAWN_INTERVAL = 10000;
 let enemySpawnTimer = 0;
 let enemiesKilled = 0;
@@ -1723,4 +1723,5 @@ function draw(){
 
 // Iniciar o jogo
 update();
+
 updateSummonButton();
