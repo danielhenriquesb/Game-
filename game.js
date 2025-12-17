@@ -57,6 +57,72 @@ enemySprite.src = 'enemy.png';
 const soldierSprite = new Image();
 soldierSprite.src = 'invocacao.png';
 
+// SWORD - ESPADA GIRATÓRIA
+const swordSprite = new Image();
+swordSprite.src = 'sword.png';
+
+let sword = {
+  active: false,
+  radius: 50,
+  angle: 0,
+  rotationSpeed: 0.05,
+  size: 25,
+  damage: 10000, // Hit kill (10000 de dano)
+  x: 0,
+  y: 0,
+  speed: 6, // Velocidade de perseguição
+  targetEnemy: null, // Inimigo alvo atual
+  trail: [], // Array para partículas do rastro
+  trailParticles: 15, // Quantidade de partículas do rastro
+  hitCooldown: 0, // Cooldown para evitar múltiplos hits no mesmo frame
+  returnDelay: 0, // Delay para voltar ao jogador
+  
+  // NOVAS PROPRIEDADES PARA PERSECUÇÃO
+  detectionRadius: 500, // Raio de detecção de inimigos
+  orbitRadius: 50, // Raio de órbita quando não perseguindo
+  orbitSpeed: 0.08, // Velocidade de órbita
+  isReturning: false, // Se está voltando ao jogador
+  returnSpeed: 8, // Velocidade de retorno ao jogador
+  attackMode: 'orbit', // 'orbit' ou 'pursuit'
+  
+  updateAnimation: function() {
+    // Atualizar ângulo para efeito visual (sempre girando)
+    this.angle += this.rotationSpeed;
+  },
+  
+  findNearestEnemy: function() {
+    let nearest = null;
+    let minDist = Infinity;
+    
+    enemies.forEach(e => {
+      if (e.life <= 0) return;
+      
+      const dx = e.x - this.x;
+      const dy = e.y - this.y;
+      const d = Math.hypot(dx, dy);
+      
+      if (d < this.detectionRadius && d < minDist) {
+        minDist = d;
+        nearest = e;
+      }
+    });
+    
+    return nearest;
+  },
+  
+  moveToTarget: function(targetX, targetY) {
+    const dx = targetX - this.x;
+    const dy = targetY - this.y;
+    const distance = Math.hypot(dx, dy);
+    
+    if (distance > 0) {
+      // Normalizar direção e mover
+      this.x += (dx / distance) * this.speed;
+      this.y += (dy / distance) * this.speed;
+    }
+  }
+};
+
 // Adicionar sprites para os itens
 const herbSprite = new Image();
 herbSprite.src = 'https://cdn-icons-png.flaticon.com/512/684/684908.png';
@@ -161,8 +227,8 @@ function dropLoot(enemyX, enemyY) {
 }
 
 /* SISTEMA DE SPAWN DE INIMIGOS */
-const MAX_ENEMIES = 400;
-const ENEMY_SPAWN_COUNT = 100;
+const MAX_ENEMIES = 200;
+const ENEMY_SPAWN_COUNT = 10;
 const ENEMY_SPAWN_INTERVAL = 10000;
 let enemySpawnTimer = 0;
 let enemiesKilled = 0;
@@ -401,6 +467,222 @@ let magicProjectiles = [];
 
 /* TIROS */
 const bullets = [];
+
+/* ATUALIZAÇÃO DA ESPADA - COMPORTAMENTO DE PERSECUÇÃO */
+function updateSword() {
+  if (!sword.active) {
+    // Se inativa, apenas gira em volta do jogador
+    sword.x = player.x + Math.cos(sword.angle) * sword.orbitRadius;
+    sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
+    sword.angle += sword.orbitSpeed;
+    sword.trail = []; // Limpar rastro
+    sword.targetEnemy = null;
+    return;
+  }
+  
+  sword.updateAnimation();
+  
+  // Se está voltando ao jogador
+  if (sword.isReturning) {
+    const dx = player.x - sword.x;
+    const dy = player.y - sword.y;
+    const distance = Math.hypot(dx, dy);
+    
+    if (distance < sword.orbitRadius) {
+      // Chegou perto do jogador, voltar a orbitar
+      sword.isReturning = false;
+      sword.attackMode = 'orbit';
+      sword.x = player.x + Math.cos(sword.angle) * sword.orbitRadius;
+      sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
+    } else {
+      // Continuar voltando
+      sword.x += (dx / distance) * sword.returnSpeed;
+      sword.y += (dy / distance) * sword.returnSpeed;
+    }
+    
+    // Adicionar rastro mesmo quando voltando
+    addSwordTrail();
+    return;
+  }
+  
+  // Procurar inimigo mais próximo
+  if (!sword.targetEnemy || sword.targetEnemy.life <= 0) {
+    sword.targetEnemy = sword.findNearestEnemy();
+    
+    if (!sword.targetEnemy) {
+      // Nenhum inimigo encontrado, voltar ao modo de órbita
+      if (sword.attackMode === 'pursuit') {
+        sword.isReturning = true;
+      } else {
+        sword.x = player.x + Math.cos(sword.angle) * sword.orbitRadius;
+        sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
+        sword.angle += sword.orbitSpeed;
+      }
+      addSwordTrail();
+      return;
+    }
+    
+    sword.attackMode = 'pursuit';
+  }
+  
+  // Mover em direção ao inimigo alvo
+  if (sword.targetEnemy && sword.targetEnemy.life > 0) {
+    const dx = sword.targetEnemy.x - sword.x;
+    const dy = sword.targetEnemy.y - sword.y;
+    const distance = Math.hypot(dx, dy);
+    
+    if (distance < 10) {
+      // Atingiu o inimigo - causar dano
+      const wasAlive = sword.targetEnemy.life > 0;
+      sword.targetEnemy.life -= sword.damage;
+      
+      if (wasAlive && sword.targetEnemy.life <= 0) {
+        enemiesKilled++;
+        sword.targetEnemy.wasAlive = false;
+        dropLoot(sword.targetEnemy.x, sword.targetEnemy.y);
+        
+        // Efeito visual de hit
+        for (let i = 0; i < 8; i++) {
+          sword.trail.push({
+            x: sword.targetEnemy.x + Math.random() * 30 - 15,
+            y: sword.targetEnemy.y + Math.random() * 30 - 15,
+            life: 15,
+            maxLife: 15,
+            size: 4,
+            color: 'cyan'
+          });
+        }
+        
+        console.log(`Inimigo morto pela espada! Total: ${enemiesKilled}`);
+      }
+      
+      // Cooldown e buscar próximo inimigo
+      sword.hitCooldown = 8;
+      sword.targetEnemy = sword.findNearestEnemy();
+      
+      // Se não houver mais inimigos, voltar ao jogador
+      if (!sword.targetEnemy) {
+        sword.isReturning = true;
+      }
+    } else {
+      // Continuar perseguindo
+      sword.moveToTarget(sword.targetEnemy.x, sword.targetEnemy.y);
+    }
+  } else {
+    // Inimigo morreu, buscar próximo
+    sword.targetEnemy = sword.findNearestEnemy();
+    if (!sword.targetEnemy) {
+      sword.isReturning = true;
+    }
+  }
+  
+  // Adicionar partícula de rastro
+  addSwordTrail();
+  
+  // Cooldown de hit
+  if (sword.hitCooldown > 0) {
+    sword.hitCooldown--;
+  }
+}
+
+function addSwordTrail() {
+  if (!sword.active) return;
+  
+  sword.trail.unshift({
+    x: sword.x,
+    y: sword.y,
+    life: 25,
+    maxLife: 25,
+    size: sword.attackMode === 'pursuit' ? 4 : 3,
+    color: sword.attackMode === 'pursuit' ? 'cyan' : 'rgba(100, 150, 255, 0.7)'
+  });
+  
+  // Limitar número de partículas do rastro
+  if (sword.trail.length > sword.trailParticles) {
+    sword.trail.pop();
+  }
+  
+  // Atualizar vida das partículas do rastro
+  sword.trail.forEach(particle => {
+    particle.life--;
+  });
+  
+  // Remover partículas mortas
+  sword.trail = sword.trail.filter(p => p.life > 0);
+}
+
+/* VERIFICAR COLISÃO DA ESPADA COM INIMIGOS (backup) */
+function checkSwordCollisions() {
+  if (!sword.active || sword.hitCooldown > 0) return;
+  
+  // Verificar colisão com todos os inimigos (para casos de múltiplos inimigos próximos)
+  enemies.forEach(enemy => {
+    if (enemy.life <= 0) return;
+    
+    const dx = enemy.x - sword.x;
+    const dy = enemy.y - sword.y;
+    const distance = Math.hypot(dx, dy);
+    const hitRadius = (enemy.size + sword.size) / 2;
+    
+    if (distance < hitRadius) {
+      // Hit kill no inimigo
+      const wasAlive = enemy.life > 0;
+      enemy.life -= sword.damage;
+      
+      if (wasAlive && enemy.life <= 0) {
+        enemiesKilled++;
+        enemy.wasAlive = false;
+        dropLoot(enemy.x, enemy.y);
+        
+        // Efeito visual de hit
+        for (let i = 0; i < 5; i++) {
+          sword.trail.push({
+            x: enemy.x + Math.random() * 20 - 10,
+            y: enemy.y + Math.random() * 20 - 10,
+            life: 10,
+            maxLife: 10,
+            size: 2,
+            color: 'white'
+          });
+        }
+        
+        console.log(`Inimigo morto pela espada! Total: ${enemiesKilled}`);
+      }
+      
+      // Cooldown para evitar múltiplos hits no mesmo inimigo
+      sword.hitCooldown = 5;
+    }
+  });
+}
+
+/* TOGGLE DA ESPADA */
+function toggleSword() {
+  sword.active = !sword.active;
+  const swordBtn = document.getElementById('sword');
+  
+  if (sword.active) {
+    swordBtn.classList.add('active-mode');
+    swordBtn.title = "Espada: ATIVA (Perseguindo inimigos)";
+    console.log("Espada ativada! Perseguindo inimigos...");
+    
+    // Inicializar posição da espada
+    sword.x = player.x + Math.cos(sword.angle) * sword.orbitRadius;
+    sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
+    sword.targetEnemy = sword.findNearestEnemy();
+    sword.attackMode = sword.targetEnemy ? 'pursuit' : 'orbit';
+    
+  } else {
+    swordBtn.classList.remove('active-mode');
+    swordBtn.title = "Espada: DESATIVADA (Clique para ativar)";
+    console.log("Espada desativada!");
+    sword.targetEnemy = null;
+    sword.isReturning = false;
+    sword.attackMode = 'orbit';
+  }
+}
+
+/* EVENT LISTENER PARA BOTÃO DA ESPADA */
+document.getElementById("sword").addEventListener("pointerdown", toggleSword);
 
 /* COLISÃO */
 function isWall(px, py){
@@ -1296,6 +1578,16 @@ function drawMinimap() {
     ctx.fill();
   });
   
+  // Desenhar espada (ponto ciano se ativa)
+  if (sword.active) {
+    ctx.fillStyle = 'cyan';
+    const swordMapX = x + (sword.x / TILE) * scale;
+    const swordMapY = y + (sword.y / TILE) * scale;
+    ctx.beginPath();
+    ctx.arc(swordMapX, swordMapY, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
   // Desenhar jogador (ponto branco)
   ctx.fillStyle = 'white';
   const playerMapX = x + (player.x / TILE) * scale;
@@ -1359,6 +1651,13 @@ function updateGameUI() {
   } else {
     soulsDisplay.classList.remove('active');
   }
+  
+  // Atualizar tooltip da espada
+  const swordBtn = document.getElementById('sword');
+  const modeText = sword.active ? 
+    (sword.attackMode === 'pursuit' ? 'PERSEGUINDO INIMIGOS' : 'ÓRBITA') : 
+    'DESATIVADA';
+  swordBtn.title = `Espada: ${modeText}`;
 }
 
 /* ATUALIZAÇÃO DOS PROJÉTEIS MÁGICOS */
@@ -1555,6 +1854,9 @@ function update(currentTime = 0){
   // Coleta automática de itens
   checkAutoCollection();
   
+  // Atualizar espada
+  updateSword();
+  
   camera.x = player.x - canvas.width/2 + player.size/2;
   camera.y = player.y - canvas.height/2 + player.size/2;
   camera.x = Math.max(0, Math.min(camera.x, worldW - canvas.width));
@@ -1665,6 +1967,95 @@ function draw(){
     ctx.shadowBlur = 0;
   });
   
+  /* DESENHAR RASTRO DA ESPADA */
+  if (sword.active && sword.trail.length > 1) {
+    // Desenhar linha conectando as partículas do rastro
+    for (let i = 0; i < sword.trail.length - 1; i++) {
+      const current = sword.trail[i];
+      const next = sword.trail[i + 1];
+      
+      const alpha = current.life / current.maxLife * 0.5;
+      const color = current.color || 'rgba(100, 150, 255, 0.5)';
+      
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(current.x - camera.x, current.y - camera.y);
+      ctx.lineTo(next.x - camera.x, next.y - camera.y);
+      ctx.stroke();
+    }
+    
+    // Desenhar partículas do rastro
+    sword.trail.forEach(particle => {
+      const alpha = particle.life / particle.maxLife;
+      const color = particle.color || 'rgba(100, 150, 255, 0.5)';
+      
+      // Partícula central
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Brilho externo
+      ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'rgba(100, 150, 255, 0.7)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+  }
+  
+  /* DESENHAR ESPADA */
+  const drawSwordX = sword.x - camera.x;
+  const drawSwordY = sword.y - camera.y;
+  
+  // Brilho quando ativa
+  if (sword.active) {
+    ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'blue';
+    ctx.shadowBlur = sword.attackMode === 'pursuit' ? 20 : 15;
+  }
+  
+  // Desenhar sprite ou fallback
+  if (swordSprite.complete) {
+    ctx.save();
+    ctx.translate(drawSwordX, drawSwordY);
+    ctx.rotate(sword.angle + Math.PI / 4); // Rotação de 45° para alinhar
+    ctx.drawImage(swordSprite, -sword.size/2, -sword.size/2, sword.size, sword.size);
+    ctx.restore();
+  } else {
+    // Fallback visual
+    ctx.fillStyle = sword.active ? 
+      (sword.attackMode === 'pursuit' ? 'cyan' : 'blue') : 
+      'gray';
+    
+    ctx.beginPath();
+    ctx.arc(drawSwordX, drawSwordY, sword.size/2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Desenhar cruz da espada
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(drawSwordX - sword.size/3, drawSwordY);
+    ctx.lineTo(drawSwordX + sword.size/3, drawSwordY);
+    ctx.moveTo(drawSwordX, drawSwordY - sword.size/3);
+    ctx.lineTo(drawSwordX, drawSwordY + sword.size/3);
+    ctx.stroke();
+    
+    // Indicador de perseguição
+    if (sword.attackMode === 'pursuit' && sword.targetEnemy) {
+      ctx.strokeStyle = 'cyan';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(drawSwordX, drawSwordY);
+      ctx.lineTo(sword.targetEnemy.x - camera.x, sword.targetEnemy.y - camera.y);
+      ctx.stroke();
+    }
+  }
+  
+  ctx.shadowBlur = 0; // Resetar brilho
+  
   if(playerImageLoaded){
     const sx = player.currentFrame * player.frameWidth;
     const sy = player.getAnimationRow() * player.frameHeight;
@@ -1721,7 +2112,10 @@ function draw(){
   updateGameUI();
 }
 
+/* INICIALIZAR POSIÇÃO DA ESPADA */
+sword.x = player.x + Math.cos(sword.angle) * sword.orbitRadius;
+sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
+
 // Iniciar o jogo
 update();
-
 updateSummonButton();
