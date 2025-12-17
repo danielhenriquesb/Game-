@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Jogo Mobile - Sistema de Invocação</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="game-container">
+  <!-- Status acima do canvas -->
+  <div class="status-container">
+    <div class="status-bar">
+      <button class="status-btn" id="statusBtn">S</button>
+      <div class="status-display">
+        <span class="life-display">❤️ <span id="lifeValue">100</span></span>
+        <span class="ammo-display">🔫 <span id="ammoValue">100</span></span>
+        <span class="souls-display">👻 <span id="soulsValue">50</span></span>
+      </div>
+    </div>
+    
+    <!-- Painel de Status (Oculto) -->
+    <div class="status-panel" id="statusPanel">
+      <div class="status-content">
+        <p>🎯 Inimigos Mortos: <span id="killedCount">0</span></p>
+        <p>🌿 Ervas Coletadas: <span id="herbsCount">0</span></p>
+        <p>🔫 Balas no Inventário: <span id="bulletsCount">100</span></p>
+        <p>⚔️ Soldados de Ataque: <span id="attackSoulsCount">40</span></p>
+        <p>🔮 Soldados Mago: <span id="mageSoulsCount">10</span></p>
+        <p>👥 Soldados Ativos: <span id="soldiersCount">0</span>/100</p>
+        <p>👾 Inimigos Vivos: <span id="enemiesAlive">5</span>/10</p>
+        <p>⏱️ Próximo Spawn: <span id="spawnTimer">10</span>s</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tela do Jogo Centralizada -->
+  <div class="canvas-container">
+    <canvas id="canvas" width="480" height="480"></canvas>
+  </div>
+
+  <!-- Controles abaixo do canvas -->
+  <div class="controls-container">
+    <!-- Joystick à esquerda -->
+    <div class="joystick-container">
+      <div class="joystick" id="joystick">
+        <div class="joystick-thumb" id="thumb"></div>
+      </div>
+    </div>
+
+    <!-- Botões de ação à direita -->
+    <div class="action-container">
+      <div class="action-row">
+        <button class="inventory-btn" id="openInventory">🎒</button>
+        <button class="attack-btn" id="attack">⚔️</button>
+      </div>
+      <div class="action-row">
+        <button class="summon-btn" id="summon" disabled>👥</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventário (Popup) -->
+  <div class="inventory-popup" id="inventory">
+    <div class="inventory-header">
+      <h3>📦 INVENTÁRIO</h3>
+      <button class="close-btn" id="closeInventory">×</button>
+    </div>
+    <div class="inventory-content" id="inventoryContent">
+      <!-- Itens serão adicionados aqui -->
+    </div>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
