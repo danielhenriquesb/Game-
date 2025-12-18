@@ -12,6 +12,9 @@
   <div class="status-container">
     <div class="status-bar">
       <button class="status-btn" id="statusBtn">S</button>
+      <!-- Botões de controle de spawn adicionados -->
+      <button class="status-btn" id="toggleEnemySpawn" title="Ativar/Desativar Spawn de Inimigos">👹</button>
+      <button class="status-btn" id="toggleNPCSpawn" title="Ativar/Desativar Spawn de NPCs">🧙</button>
       <div class="status-display">
         <span class="life-display">❤️ <span id="lifeValue">100</span></span>
         <span class="ammo-display">🔫 <span id="ammoValue">100</span></span>
@@ -28,7 +31,8 @@
         <p>⚔️ Soldados de Ataque: <span id="attackSoulsCount">40</span></p>
         <p>🔮 Soldados Mago: <span id="mageSoulsCount">10</span></p>
         <p>👥 Soldados Ativos: <span id="soldiersCount">0</span>/100</p>
-        <p>👾 Inimigos Vivos: <span id="enemiesAlive">5</span>/10</p>
+        <p>👾 Inimigos Vivos: <span id="enemiesAlive">5</span>/200</p>
+        <p>🏃 NPCs Vivos: <span id="npcsAlive">0</span>/40</p>
         <p>⏱️ Próximo Spawn: <span id="spawnTimer">10</span>s</p>
       </div>
     </div>
