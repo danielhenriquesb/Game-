@@ -71,6 +71,21 @@ body {
   transform: scale(0.95);
 }
 
+/* Botões de spawn na barra de status */
+.status-btn:nth-child(2),
+.status-btn:nth-child(3) {
+  background: rgba(80, 80, 200, 0.7);
+  margin-right: 8px;
+}
+
+.status-btn:nth-child(2).active {
+  background: rgba(0, 200, 0, 0.7);
+}
+
+.status-btn:nth-child(3).active {
+  background: rgba(200, 200, 0, 0.7);
+}
+
 .status-display {
   display: flex;
   gap: 20px;
@@ -427,6 +442,28 @@ canvas {
 
 .souls-display.active {
   animation: soulGlow 2s infinite;
+}
+
+/* Barras de vida dos NPCs */
+.npc-life-bar.normal {
+  background: linear-gradient(to right, #4CAF50, #8BC34A);
+}
+
+.npc-life-bar.powered {
+  background: linear-gradient(to right, #FFC107, #FF9800);
+  animation: powerGlow 2s infinite;
+}
+
+@keyframes powerGlow {
+  0% { opacity: 0.8; }
+  50% { opacity: 1; }
+  100% { opacity: 0.8; }
+}
+
+/* Projéteis mágicos dos NPCs */
+.magic-orb {
+  background: radial-gradient(circle at 30% 30%, #FFEB3B, #FF9800);
+  box-shadow: 0 0 15px #FF9800;
 }
 
 /* RESPONSIVIDADE PARA TELAS PEQUENAS */
