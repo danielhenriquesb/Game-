@@ -73,11 +73,21 @@ swordSprite.src = 'sword.png';
 const npcSprite = new Image();
 npcSprite.src = 'iceslayer.png';
 
+// Carregar sprite do inimigo REDELFO
+const enemySprite = new Image();
+enemySprite.src = 'redelfo.png';
+
 let iceImageLoaded = false;
+let enemyImageLoaded = false;
 
 iceSprite.onload = function() {
   iceImageLoaded = true;
   console.log("IceSlayer sprite carregado (182x1280)");
+};
+
+enemySprite.onload = function() {
+  enemyImageLoaded = true;
+  console.log("Redelfo sprite carregado (182x1280)");
 };
 
 swordSprite.onload = function() {
@@ -164,7 +174,7 @@ function dropLoot(enemyX, enemyY) {
   }
 }
 
-/* SISTEMA DE ANIMAÇÃO UNIFICADA */
+/* SISTEMA DE ANIMAÇÃO PARA PERSONAGENS (ICESLAYER) */
 class AnimationManager {
   constructor() {
     this.spriteWidth = 182;
@@ -265,8 +275,128 @@ class AnimationManager {
   }
 }
 
-// Instância global do gerenciador de animações
+/* SISTEMA DE ANIMAÇÃO PARA INIMIGOS (REDELFO) */
+class EnemyAnimationManager {
+  constructor() {
+    this.spriteWidth = 182;
+    this.spriteHeight = 1280;
+    this.cols = 4;
+    this.rows = 24;
+    this.frameWidth = this.spriteWidth / this.cols;
+    this.frameHeight = this.spriteHeight / this.rows;
+    
+    // Definições das animações do inimigo REDELFO
+    this.animations = {
+      // 1. Parado após andar para baixo/esquerda/direita
+      idle_down: { startRow: 0, endRow: 1, startCol: 0, endCol: 3, frames: 8, speed: 10 },
+      
+      // 2. Parado após andar para cima
+      idle_up: { startRow: 2, endRow: 2, startCol: 0, endCol: 3, frames: 4, speed: 10 },
+      
+      // 3. Andando para direita
+      walk_right: { startRow: 3, endRow: 5, startCol: 0, endCol: 1, frames: 6, speed: 8 },
+      
+      // 4. Andando para esquerda
+      walk_left: { startRow: 5, endRow: 7, startCol: 2, endCol: 3, frames: 6, speed: 8 },
+      
+      // 5. Andando para baixo
+      walk_down: { startRow: 8, endRow: 10, startCol: 0, endCol: 1, frames: 6, speed: 8 },
+      
+      // 6. Andando para cima
+      walk_up: { startRow: 10, endRow: 12, startCol: 2, endCol: 3, frames: 6, speed: 8 },
+      
+      // 7. Atacar + mover para esquerda
+      attack_left: { startRow: 13, endRow: 15, startCol: 0, endCol: 2, frames: 9, speed: 5 },
+      
+      // 8. Atacar + mover para direita
+      attack_right: { startRow: 15, endRow: 17, startCol: 3, endCol: 1, frames: 9, speed: 5 },
+      
+      // 9. Atacar + mover para baixo
+      attack_down: { startRow: 18, endRow: 20, startCol: 2, endCol: 0, frames: 9, speed: 5 },
+      
+      // 10. Atacar + mover para cima
+      attack_up: { startRow: 21, endRow: 23, startCol: 1, endCol: 3, frames: 9, speed: 5 }
+    };
+  }
+  
+  getAnimationState(entity) {
+    // Verifica se o inimigo está atacando
+    if (entity.isAttacking || entity.attackCooldown > 30) {
+      return `attack_${entity.lastDirection}`;
+    } 
+    // Verifica se está se movendo
+    else if (entity.moving) {
+      return `walk_${entity.lastDirection}`;
+    } 
+    // Se não está nem atacando nem se movendo, está idle
+    else {
+      // Verifica a última direção
+      if (entity.lastDirection === 'up') {
+        return 'idle_up';
+      } else {
+        return 'idle_down';
+      }
+    }
+  }
+  
+  updateAnimation(entity) {
+    const animState = this.getAnimationState(entity);
+    const anim = this.animations[animState];
+    
+    if (!anim || !anim.frames) return;
+    
+    // Inicializa o timer se não existir
+    entity.animationTimer = (entity.animationTimer || 0) + 1;
+    
+    // Atualiza frame no tempo certo
+    if (entity.animationTimer >= anim.speed) {
+      entity.currentFrame = (entity.currentFrame || 0) + 1;
+      
+      // Se atingiu o fim da animação, faz loop
+      if (entity.currentFrame >= anim.frames) {
+        entity.currentFrame = 0;
+      }
+      
+      entity.animationTimer = 0;
+    }
+  }
+  
+  getSpriteCoordinates(entity) {
+    const animState = this.getAnimationState(entity);
+    const anim = this.animations[animState];
+    
+    if (!anim) return { sx: 0, sy: 0 };
+    
+    const frame = entity.currentFrame || 0;
+    const totalCols = Math.abs(anim.endCol - anim.startCol) + 1;
+    
+    // Calcula offset baseado no frame atual
+    const rowOffset = Math.floor(frame / totalCols);
+    const colOffset = frame % totalCols;
+    
+    // Calcula linha e coluna reais
+    const row = anim.startRow + Math.min(rowOffset, anim.endRow - anim.startRow);
+    let col;
+    
+    if (anim.startCol <= anim.endCol) {
+      col = anim.startCol + colOffset;
+    } else {
+      // Para animações que vão da direita para esquerda
+      col = anim.startCol - colOffset;
+    }
+    
+    return {
+      sx: col * this.frameWidth,
+      sy: row * this.frameHeight,
+      frameWidth: this.frameWidth,
+      frameHeight: this.frameHeight
+    };
+  }
+}
+
+// Instâncias globais dos gerenciadores de animação
 const animationManager = new AnimationManager();
+const enemyAnimationManager = new EnemyAnimationManager();
 
 /* SISTEMA DE SPAWN DE INIMIGOS */
 const MAX_ENEMIES = 200;
@@ -299,12 +429,15 @@ function spawnEnemies(count) {
       wasAlive: true,
       targetedBy: null,
       
-      // Propriedades de animação
+      // Propriedades de animação para inimigos REDELFO
       lastDirection: 'down',
       moving: true,
       isAttacking: false,
       currentFrame: 0,
       animationTimer: 0,
+      
+      // Nova propriedade para controlar estado de ataque
+      attackAnimationTimer: 0,
       
       findNearestTarget: function() {
         let nearest = player;
@@ -396,12 +529,15 @@ for(let i = 0; i < 5; i++){
     wasAlive: true,
     targetedBy: null,
     
-    // Propriedades de animação
+    // Propriedades de animação para inimigos REDELFO
     lastDirection: 'down',
     moving: true,
     isAttacking: false,
     currentFrame: 0,
     animationTimer: 0,
+    
+    // Nova propriedade para controlar estado de ataque
+    attackAnimationTimer: 0,
     
     findNearestTarget: function() {
       let nearest = player;
@@ -1661,20 +1797,32 @@ function update(currentTime = 0){
     player.attackCooldown--;
   }
   
-  // Atualizar inimigos
+  // Atualizar inimigos - MODIFICADO PARA ANIMAÇÃO
   enemies.forEach(e => {
     if(e.life <= 0) return;
     
     const target = e.findNearestTarget();
-    moveIntelligently(e, target.x, target.y);
+    const moved = moveIntelligently(e, target.x, target.y);
+    
+    // Atualizar estado de movimento para animação
+    e.moving = moved;
     
     const dx = target.x - e.x;
     const dy = target.y - e.y;
     const distance = Math.hypot(dx, dy);
     
+    // Atualizar direção para animação
+    if (Math.abs(dx) > Math.abs(dy)) {
+      e.lastDirection = dx > 0 ? 'right' : 'left';
+    } else {
+      e.lastDirection = dy > 0 ? 'down' : 'up';
+    }
+    
     if(distance < 20 && e.attackCooldown <= 0){
       target.life -= ENEMY_DAMAGE;
       e.attackCooldown = 40;
+      e.isAttacking = true;
+      e.attackAnimationTimer = 15; // Tempo da animação de ataque
       
       if(target === player && player.life <= 0) {
         gameOver();
@@ -1682,6 +1830,14 @@ function update(currentTime = 0){
     }
     
     if (e.attackCooldown > 0) e.attackCooldown--;
+    
+    // Resetar animação de ataque após o tempo
+    if (e.attackAnimationTimer > 0) {
+      e.attackAnimationTimer--;
+      if (e.attackAnimationTimer <= 0) {
+        e.isAttacking = false;
+      }
+    }
   });
   
   // Atualizar soldados
@@ -2005,26 +2161,28 @@ function draw(){
     ctx.shadowBlur = 0;
   });
   
-  // Desenhar inimigos
+  // DESENHAR INIMIGOS COM NOVA ANIMAÇÃO REDELFO
   enemies.forEach(e => {
     if(e.life <= 0) return;
     
-    // Atualizar animação do inimigo
-    animationManager.updateAnimation(e);
-    const spriteCoords = animationManager.getSpriteCoordinates(e);
+    // Atualizar animação do inimigo REDELFO
+    enemyAnimationManager.updateAnimation(e);
+    const spriteCoords = enemyAnimationManager.getSpriteCoordinates(e);
     
     const drawX = e.x - camera.x - (e.drawWidth - e.size)/2;
     const drawY = e.y - camera.y - (e.drawHeight - e.size)/2;
     
-    if (iceImageLoaded) {
+    // Usar sprite do inimigo REDELFO
+    if (enemyImageLoaded) {
       ctx.drawImage(
-        iceSprite,
+        enemySprite,
         spriteCoords.sx, spriteCoords.sy,
         spriteCoords.frameWidth, spriteCoords.frameHeight,
         drawX, drawY,
         e.drawWidth, e.drawHeight
       );
     } else {
+      // Fallback se a imagem não carregar
       ctx.fillStyle = "red";
       ctx.fillRect(e.x - camera.x, e.y - camera.y, e.size, e.size);
     }
