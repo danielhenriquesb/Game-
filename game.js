@@ -1,6 +1,3 @@
-// game.js - IceSlayer Game
-// Sistema de animação baseado no sprite "iceslayer.png"
-
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
@@ -11,13 +8,16 @@ const SOLDIER_DAMAGE = 36;
 const MAGE_DAMAGE = 200;
 let gameRunning = true;
 
+// Limitação de soldados - MODIFICADO: de 100 para 10
 const MAX_SOLDIERS = 10;
 
 // ========== CONFIGURAÇÕES DE SPAWN ==========
 let enemySpawnEnabled = true;
 let npcSpawnEnabled = false;
 let npcs = [];
+// MODIFICADO: de 40 para 10
 const MAX_NPCS = 10;
+// MODIFICADO: de 20 para 10
 const NPC_SPAWN_COUNT = 10;
 const NPC_SPAWN_INTERVAL = 10000;
 let npcSpawnTimer = 0;
@@ -104,8 +104,8 @@ let lootItems = [];
 let inventory = {
   herbs: 0,
   bullets: 100,
-  attackSouls: 40,
-  mageSouls: 10
+  attackSouls: 10,  // MODIFICADO: de 40 para 10
+  mageSouls: 5      // MODIFICADO: de 10 para 5
 };
 
 // Adicionar sprites para os itens
@@ -1145,7 +1145,7 @@ function updateMagicProjectiles() {
   }
 }
 
-/* SISTEMA DE INVOCAÇÕES EM MASSA */
+/* SISTEMA DE INVOCAÇÕES EM MASSA - MODIFICADO PARA 10 LIMITE */
 function toggleMassSummon() {
   if (!soldiersSummoned) {
     const currentSoldiers = soldiers.length;
@@ -1161,7 +1161,8 @@ function toggleMassSummon() {
     }
     
     const availableSlots = MAX_SOLDIERS - currentSoldiers;
-    const soulsToSummon = Math.min(totalSouls, availableSlots);
+    // MODIFICADO: Limitar a 10 invocações por vez
+    const soulsToSummon = Math.min(totalSouls, availableSlots, 10);
     
     soldiers.length = 0;
     const spawnRadius = 60;
@@ -1585,7 +1586,8 @@ function updateGameUI() {
   bulletsCount.textContent = inventory.bullets;
   soldiersCount.textContent = aliveSoldiers;
   enemiesAlive.textContent = `${aliveEnemies}/200`;
-  npcsAliveElement.textContent = `${aliveNPCs}/40`;
+  // MODIFICADO: de 40 para 10
+  npcsAliveElement.textContent = `${aliveNPCs}/10`;
   spawnTimer.textContent = timeToSpawn;
   
   const lifeDisplay = document.querySelector('.life-display');
