@@ -9,14 +9,14 @@ const MAGE_DAMAGE = 200;
 let gameRunning = true;
 
 // Limitação de soldados
-const MAX_SOLDIERS = 100;
+const MAX_SOLDIERS = 10;
 
 // ========== CONFIGURAÇÕES DE SPAWN ==========
 let enemySpawnEnabled = true;
 let npcSpawnEnabled = false;
 let npcs = [];
-const MAX_NPCS = 40;
-const NPC_SPAWN_COUNT = 20;
+const MAX_NPCS = 10;
+const NPC_SPAWN_COUNT = 10;
 const NPC_SPAWN_INTERVAL = 10000;
 let npcSpawnTimer = 0;
 const NPC_POWER_CHANCE = 0.25;
@@ -2148,4 +2148,5 @@ sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
 // Iniciar o jogo
 update();
 updateSummonButton();
+
 
