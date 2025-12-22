@@ -2148,3 +2148,4 @@ sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
 // Iniciar o jogo
 update();
 updateSummonButton();
+
