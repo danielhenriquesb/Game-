@@ -11,14 +11,14 @@ const SOLDIER_DAMAGE = 36;
 const MAGE_DAMAGE = 200;
 let gameRunning = true;
 
-const MAX_SOLDIERS = 100;
+const MAX_SOLDIERS = 10;
 
 // ========== CONFIGURAÇÕES DE SPAWN ==========
 let enemySpawnEnabled = true;
 let npcSpawnEnabled = false;
 let npcs = [];
-const MAX_NPCS = 40;
-const NPC_SPAWN_COUNT = 20;
+const MAX_NPCS = 10;
+const NPC_SPAWN_COUNT = 10;
 const NPC_SPAWN_INTERVAL = 10000;
 let npcSpawnTimer = 0;
 const NPC_POWER_CHANCE = 0.25;
