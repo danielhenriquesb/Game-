@@ -8,20 +8,25 @@ const SOLDIER_DAMAGE = 36;
 const MAGE_DAMAGE = 200;
 let gameRunning = true;
 
-// Limitação de soldados - MODIFICADO: de 100 para 10
+// Limitação de soldados
 const MAX_SOLDIERS = 10;
 
 // ========== CONFIGURAÇÕES DE SPAWN ==========
 let enemySpawnEnabled = true;
 let npcSpawnEnabled = false;
 let npcs = [];
-// MODIFICADO: de 40 para 10
 const MAX_NPCS = 10;
-// MODIFICADO: de 20 para 10
 const NPC_SPAWN_COUNT = 10;
 const NPC_SPAWN_INTERVAL = 10000;
 let npcSpawnTimer = 0;
 const NPC_POWER_CHANCE = 0.25;
+
+// ========== BOSS ==========
+let boss = null;
+let bossFireballs = [];
+const BOSS_SPAWN_HEALTH = 5000;
+const BOSS_FIREBALL_DAMAGE = 30;
+const BOSS_FIREBALL_SPEED = 4;
 
 /* MAPA */
 const map = [
@@ -77,8 +82,13 @@ npcSprite.src = 'iceslayer.png';
 const enemySprite = new Image();
 enemySprite.src = 'redelfo.png';
 
+// Carregar sprite do BOSS
+const bossSprite = new Image();
+bossSprite.src = 'boss.png';
+
 let iceImageLoaded = false;
 let enemyImageLoaded = false;
+let bossImageLoaded = false;
 
 iceSprite.onload = function() {
   iceImageLoaded = true;
@@ -88,6 +98,11 @@ iceSprite.onload = function() {
 enemySprite.onload = function() {
   enemyImageLoaded = true;
   console.log("Redelfo sprite carregado (182x1280)");
+};
+
+bossSprite.onload = function() {
+  bossImageLoaded = true;
+  console.log("Boss sprite carregado (182x1280)");
 };
 
 swordSprite.onload = function() {
@@ -114,8 +129,8 @@ let lootItems = [];
 let inventory = {
   herbs: 0,
   bullets: 100,
-  attackSouls: 10,  // MODIFICADO: de 40 para 10
-  mageSouls: 5      // MODIFICADO: de 10 para 5
+  attackSouls: 10,
+  mageSouls: 5
 };
 
 // Adicionar sprites para os itens
@@ -214,7 +229,7 @@ class AnimationManager {
       if (entity.lastDirection === 'up') {
         return 'idle_up';
       } else {
-        return 'idle_down'; // Para down, left, right usa a mesma idle
+        return 'idle_down';
       }
     }
   }
@@ -440,6 +455,11 @@ function spawnEnemies(count) {
       attackAnimationTimer: 0,
       
       findNearestTarget: function() {
+        // Priorizar o boss se existir
+        if (boss) {
+          return boss;
+        }
+        
         let nearest = player;
         let minDist = Math.hypot(player.x - this.x, player.y - this.y);
         
@@ -540,6 +560,11 @@ for(let i = 0; i < 5; i++){
     attackAnimationTimer: 0,
     
     findNearestTarget: function() {
+      // Priorizar o boss se existir
+      if (boss) {
+        return boss;
+      }
+      
       let nearest = player;
       let minDist = Math.hypot(player.x - this.x, player.y - this.y);
       
@@ -571,8 +596,11 @@ let soldiers = [];
 let soldierIdCounter = 0;
 let soldiersSummoned = false;
 
-// Projéteis mágicos
+// Projéteis mágicos de soldados
 let magicProjectiles = [];
+
+// Projéteis mágicos de NPCs
+let npcMagicProjectiles = [];
 
 /* TIROS */
 const bullets = [];
@@ -608,6 +636,16 @@ let sword = {
     let nearest = null;
     let minDist = Infinity;
     
+    // Priorizar o boss se existir
+    if (boss) {
+      const dx = boss.x - this.x;
+      const dy = boss.y - this.y;
+      const d = Math.hypot(dx, dy);
+      if (d < this.detectionRadius) {
+        return boss;
+      }
+    }
+    
     enemies.forEach(e => {
       if (e.life <= 0) return;
       
@@ -639,6 +677,7 @@ let sword = {
 /* BOTÕES DE CONTROLE */
 document.getElementById("toggleEnemySpawn").addEventListener("pointerdown", toggleEnemySpawn);
 document.getElementById("toggleNPCSpawn").addEventListener("pointerdown", toggleNPCSpawn);
+document.getElementById("bossSpawn").addEventListener("pointerdown", toggleBoss);
 document.getElementById("sword").addEventListener("pointerdown", toggleSword);
 document.getElementById("summon").addEventListener("pointerdown", toggleMassSummon);
 document.getElementById("attack").addEventListener("pointerdown", shoot);
@@ -669,6 +708,76 @@ function toggleNPCSpawn() {
     btn.classList.remove('active');
     btn.title = "Spawn de NPCs: DESATIVADO";
   }
+}
+
+function toggleBoss() {
+  if (!boss) {
+    spawnBoss();
+  } else {
+    boss = null;
+    bossFireballs = [];
+    document.getElementById('bossSpawn').classList.remove('active');
+    document.getElementById('bossSpawn').title = 'BOSS: MORTO (Clique para spawnar)';
+    document.getElementById('bossStatus').textContent = 'MORTO';
+    document.getElementById('bossStatus').style.color = '#ff0000';
+  }
+}
+
+function spawnBoss() {
+  if (boss) return;
+  
+  const pos = getRandomFreePosition(60);
+  boss = {
+    x: pos.x,
+    y: pos.y,
+    size: 60,
+    drawWidth: 182,
+    drawHeight: 160,
+    speed: 1,
+    life: BOSS_SPAWN_HEALTH,
+    maxLife: BOSS_SPAWN_HEALTH,
+    attackCooldown: 0,
+    attackInterval: 90,
+    lastDirection: 'down',
+    moving: true,
+    isAttacking: false,
+    currentFrame: 0,
+    animationTimer: 0,
+    attackAnimationTimer: 0,
+    
+    // Ataque de fogo
+    fireAttack: function() {
+      if (this.attackCooldown <= 0) {
+        this.isAttacking = true;
+        this.attackAnimationTimer = 15;
+        
+        // Dispara 3 fireballs em direções diferentes
+        for (let i = 0; i < 3; i++) {
+          const angle = Math.atan2(player.y - this.y, player.x - this.x) + (i - 1) * 0.3;
+          
+          bossFireballs.push({
+            x: this.x + this.size/2,
+            y: this.y + this.size/2,
+            vx: Math.cos(angle) * BOSS_FIREBALL_SPEED,
+            vy: Math.sin(angle) * BOSS_FIREBALL_SPEED,
+            radius: 15,
+            damage: BOSS_FIREBALL_DAMAGE,
+            life: 120
+          });
+        }
+        this.attackCooldown = this.attackInterval;
+      }
+    },
+    
+    findTarget: function() {
+      return player;
+    }
+  };
+  
+  document.getElementById('bossSpawn').classList.add('active');
+  document.getElementById('bossSpawn').title = 'BOSS: VIVO';
+  document.getElementById('bossStatus').textContent = 'VIVO';
+  document.getElementById('bossStatus').style.color = '#00ff00';
 }
 
 function toggleSword() {
@@ -766,6 +875,17 @@ function endJoystick() {
 function getNearestEnemy(){
   let nearest = null;
   let minDist = Infinity;
+  
+  // Priorizar boss
+  if (boss) {
+    const dx = boss.x - player.x;
+    const dy = boss.y - player.y;
+    const d = Math.hypot(dx, dy);
+    if (d < minDist) {
+      minDist = d;
+      nearest = boss;
+    }
+  }
   
   enemies.forEach(e => {
     if(e.life <= 0) return;
@@ -874,7 +994,7 @@ function moveIntelligently(entity, targetX, targetY) {
   }
 }
 
-/* NPCs */
+/* NPCs - VERSÃO CORRIGIDA */
 function spawnNPCs(count) {
   const currentNPCs = npcs.filter(n => n.life > 0).length;
   const availableSlots = MAX_NPCS - currentNPCs;
@@ -887,7 +1007,7 @@ function spawnNPCs(count) {
     const pos = getRandomFreePosition(30);
     const hasPower = Math.random() < NPC_POWER_CHANCE;
     
-    npcs.push({
+    const npc = {
       x: pos.x,
       y: pos.y,
       size: 30,
@@ -909,27 +1029,114 @@ function spawnNPCs(count) {
       currentFrame: 0,
       animationTimer: 0,
       
-      // Projéteis mágicos
-      magicProjectiles: [],
+      // Projéteis mágicos para NPCs com poder
+      magicCooldown: 0,
       
       findNearestEnemy: function() {
         let nearest = null;
         let minDist = Infinity;
+        
+        // Priorizar boss
+        if (boss) {
+          const dx = boss.x - this.x;
+          const dy = boss.y - this.y;
+          const d = Math.hypot(dx, dy);
+          if (d < minDist && d < 300) {
+            minDist = d;
+            nearest = boss;
+          }
+        }
         
         enemies.forEach(e => {
           if (e.life <= 0) return;
           const dx = e.x - this.x;
           const dy = e.y - this.y;
           const d = Math.hypot(dx, dy);
-          if (d < minDist && d < 200) {
+          if (d < minDist && d < 300) {
             minDist = d;
             nearest = e;
           }
         });
         
         return nearest;
+      },
+      
+      // Novo: Atacar com magia se tiver poder
+      magicAttack: function(enemy) {
+        if (this.magicCooldown <= 0 && enemy) {
+          this.isAttacking = true;
+          this.magicCooldown = 90; // Cooldown maior para NPCs
+          
+          // Criar projétil mágico
+          const dx = enemy.x - this.x;
+          const dy = enemy.y - this.y;
+          const distance = Math.hypot(dx, dy) || 1;
+          
+          npcMagicProjectiles.push({
+            x: this.x + this.size/2,
+            y: this.y + this.size/2,
+            targetX: enemy.x,
+            targetY: enemy.y,
+            vx: (dx / distance) * 3,
+            vy: (dy / distance) * 3,
+            radius: 8,
+            damage: 100, // Dano reduzido para NPCs
+            owner: 'npc'
+          });
+        }
       }
-    });
+    };
+    
+    npcs.push(npc);
+  }
+}
+
+// Função para atualizar projéteis mágicos de NPCs
+function updateNPCMagicProjectiles() {
+  for (let i = npcMagicProjectiles.length - 1; i >= 0; i--) {
+    const proj = npcMagicProjectiles[i];
+    
+    proj.x += proj.vx;
+    proj.y += proj.vy;
+    
+    const dx = proj.targetX - proj.x;
+    const dy = proj.targetY - proj.y;
+    const distanceToTarget = Math.hypot(dx, dy);
+    
+    // Explodir quando atingir o alvo ou chegar perto
+    if (distanceToTarget < 30) {
+      const explosionRadius = 40;
+      
+      // Dano ao boss
+      if (boss && Math.hypot(boss.x - proj.x, boss.y - proj.y) < explosionRadius + boss.size/2) {
+        boss.life -= proj.damage;
+      }
+      
+      // Dano aos inimigos
+      enemies.forEach(e => {
+        if (e.life <= 0) return;
+        
+        const distToExplosion = Math.hypot(e.x - proj.x, e.y - proj.y);
+        if (distToExplosion < explosionRadius) {
+          e.life -= proj.damage;
+          
+          if (e.life <= 0 && e.wasAlive) {
+            enemiesKilled++;
+            dropLoot(e.x, e.y);
+            e.wasAlive = false;
+            e.targetedBy = null;
+          }
+        }
+      });
+      
+      npcMagicProjectiles.splice(i, 1);
+      continue;
+    }
+    
+    // Remover se sair do mapa
+    if (proj.x < 0 || proj.x > worldW || proj.y < 0 || proj.y > worldH) {
+      npcMagicProjectiles.splice(i, 1);
+    }
   }
 }
 
@@ -965,7 +1172,7 @@ function updateSword() {
     return;
   }
   
-  if (!sword.targetEnemy || sword.targetEnemy.life <= 0) {
+  if (!sword.targetEnemy || (sword.targetEnemy.life <= 0 && sword.targetEnemy !== boss)) {
     sword.targetEnemy = sword.findNearestEnemy();
     
     if (!sword.targetEnemy) {
@@ -983,7 +1190,7 @@ function updateSword() {
     sword.attackMode = 'pursuit';
   }
   
-  if (sword.targetEnemy && sword.targetEnemy.life > 0) {
+  if (sword.targetEnemy && (sword.targetEnemy.life > 0 || sword.targetEnemy === boss)) {
     const dx = sword.targetEnemy.x - sword.x;
     const dy = sword.targetEnemy.y - sword.y;
     const distance = Math.hypot(dx, dy);
@@ -992,7 +1199,7 @@ function updateSword() {
       const wasAlive = sword.targetEnemy.life > 0;
       sword.targetEnemy.life -= sword.damage;
       
-      if (wasAlive && sword.targetEnemy.life <= 0) {
+      if (wasAlive && sword.targetEnemy.life <= 0 && sword.targetEnemy !== boss) {
         enemiesKilled++;
         sword.targetEnemy.wasAlive = false;
         dropLoot(sword.targetEnemy.x, sword.targetEnemy.y);
@@ -1078,6 +1285,16 @@ function createAttackSoldier(spawnX, spawnY) {
       let minDist = Infinity;
       let minSoldiersOnSameEnemy = Infinity;
       
+      // Priorizar boss
+      if (boss) {
+        const dx = boss.x - this.x;
+        const dy = boss.y - this.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance < 300) {
+          return boss;
+        }
+      }
+      
       enemies.forEach(e => {
         if(e.life <= 0) return;
         
@@ -1105,7 +1322,9 @@ function createAttackSoldier(spawnX, spawnY) {
       if (bestEnemy) {
         this.targetEnemy = bestEnemy;
         this.isEngaged = true;
-        bestEnemy.targetedBy = this.id;
+        if (bestEnemy !== boss) {
+          bestEnemy.targetedBy = this.id;
+        }
       }
       
       return bestEnemy;
@@ -1117,7 +1336,7 @@ function createAttackSoldier(spawnX, spawnY) {
         this.attackCooldown = 40;
         enemy.life -= SOLDIER_DAMAGE;
         
-        if (enemy.life <= 0 && enemy.wasAlive) {
+        if (enemy.life <= 0 && enemy.wasAlive && enemy !== boss) {
           enemiesKilled++;
           dropLoot(enemy.x, enemy.y);
           enemy.wasAlive = false;
@@ -1173,6 +1392,16 @@ function createMageSoldier(spawnX, spawnY) {
       let minDist = Infinity;
       let minSoldiersOnSameEnemy = Infinity;
       
+      // Priorizar boss
+      if (boss) {
+        const dx = boss.x - this.x;
+        const dy = boss.y - this.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance < 400) {
+          return boss;
+        }
+      }
+      
       enemies.forEach(e => {
         if(e.life <= 0) return;
         
@@ -1200,7 +1429,9 @@ function createMageSoldier(spawnX, spawnY) {
       if (bestEnemy) {
         this.targetEnemy = bestEnemy;
         this.isEngaged = true;
-        bestEnemy.targetedBy = this.id;
+        if (bestEnemy !== boss) {
+          bestEnemy.targetedBy = this.id;
+        }
       }
       
       return bestEnemy;
@@ -1240,7 +1471,7 @@ function createMageSoldier(spawnX, spawnY) {
   return mage;
 }
 
-/* ATUALIZAÇÃO DOS PROJÉTEIS MÁGICOS */
+/* ATUALIZAÇÃO DOS PROJÉTEIS MÁGICOS DE SOLDADOS */
 function updateMagicProjectiles() {
   for (let i = magicProjectiles.length - 1; i >= 0; i--) {
     const proj = magicProjectiles[i];
@@ -1254,6 +1485,11 @@ function updateMagicProjectiles() {
     
     if (distanceToTarget < 20) {
       const explosionRadius = 60;
+      
+      // Dano ao boss
+      if (boss && Math.hypot(boss.x - proj.x, boss.y - proj.y) < explosionRadius + boss.size/2) {
+        boss.life -= proj.damage;
+      }
       
       enemies.forEach(e => {
         if (e.life <= 0) return;
@@ -1281,7 +1517,7 @@ function updateMagicProjectiles() {
   }
 }
 
-/* SISTEMA DE INVOCAÇÕES EM MASSA - MODIFICADO PARA 10 LIMITE */
+/* SISTEMA DE INVOCAÇÕES EM MASSA - VERSÃO CORRIGIDA */
 function toggleMassSummon() {
   if (!soldiersSummoned) {
     const currentSoldiers = soldiers.length;
@@ -1297,8 +1533,21 @@ function toggleMassSummon() {
     }
     
     const availableSlots = MAX_SOLDIERS - currentSoldiers;
-    // MODIFICADO: Limitar a 10 invocações por vez
-    const soulsToSummon = Math.min(totalSouls, availableSlots, 10);
+    
+    // Calcular quantos magos podemos invocar (garantir pelo menos 3)
+    const mageSoulsAvailable = inventory.mageSouls;
+    const magesToSummon = Math.min(3, mageSoulsAvailable, availableSlots);
+    
+    // Calcular quantos soldados de ataque podemos invocar
+    const remainingSlots = availableSlots - magesToSummon;
+    const attackToSummon = Math.min(inventory.attackSouls, remainingSlots);
+    
+    const soulsToSummon = magesToSummon + attackToSummon;
+    
+    if (soulsToSummon <= 0) {
+      console.log("Sem almas suficientes para invocar!");
+      return;
+    }
     
     soldiers.length = 0;
     const spawnRadius = 60;
@@ -1307,49 +1556,50 @@ function toggleMassSummon() {
     let attackSummoned = 0;
     let mageSummoned = 0;
     
-    for (let i = 0; i < soulsToSummon; i++) {
-      if (inventory.attackSouls > 0 && attackSummoned < inventory.attackSouls) {
-        const angle = i * angleStep;
-        let spawnX = player.x + Math.cos(angle) * spawnRadius;
-        let spawnY = player.y + Math.sin(angle) * spawnRadius;
+    // Primeiro invocar os magos (garantir 3)
+    for (let i = 0; i < magesToSummon; i++) {
+      const angle = i * angleStep;
+      let spawnX = player.x + Math.cos(angle) * spawnRadius;
+      let spawnY = player.y + Math.sin(angle) * spawnRadius;
+      
+      for (let attempts = 0; attempts < 8; attempts++) {
+        const testAngle = angle + (attempts * Math.PI / 4);
+        const testX = player.x + Math.cos(testAngle) * spawnRadius;
+        const testY = player.y + Math.sin(testAngle) * spawnRadius;
         
-        for (let attempts = 0; attempts < 8; attempts++) {
-          const testAngle = angle + (attempts * Math.PI / 4);
-          const testX = player.x + Math.cos(testAngle) * spawnRadius;
-          const testY = player.y + Math.sin(testAngle) * spawnRadius;
-          
-          if (canMove(testX, testY, 30)) {
-            spawnX = testX;
-            spawnY = testY;
-            break;
-          }
+        if (canMove(testX, testY, 30)) {
+          spawnX = testX;
+          spawnY = testY;
+          break;
         }
-        
-        const soldier = createAttackSoldier(spawnX, spawnY);
-        soldiers.push(soldier);
-        attackSummoned++;
-        
-      } else if (inventory.mageSouls > 0 && mageSummoned < inventory.mageSouls) {
-        const angle = i * angleStep;
-        let spawnX = player.x + Math.cos(angle) * spawnRadius;
-        let spawnY = player.y + Math.sin(angle) * spawnRadius;
-        
-        for (let attempts = 0; attempts < 8; attempts++) {
-          const testAngle = angle + (attempts * Math.PI / 4);
-          const testX = player.x + Math.cos(testAngle) * spawnRadius;
-          const testY = player.y + Math.sin(testAngle) * spawnRadius;
-          
-          if (canMove(testX, testY, 30)) {
-            spawnX = testX;
-            spawnY = testY;
-            break;
-          }
-        }
-        
-        const mage = createMageSoldier(spawnX, spawnY);
-        soldiers.push(mage);
-        mageSummoned++;
       }
+      
+      const mage = createMageSoldier(spawnX, spawnY);
+      soldiers.push(mage);
+      mageSummoned++;
+    }
+    
+    // Depois invocar os soldados de ataque
+    for (let i = 0; i < attackToSummon; i++) {
+      const angle = (mageSummoned + i) * angleStep;
+      let spawnX = player.x + Math.cos(angle) * spawnRadius;
+      let spawnY = player.y + Math.sin(angle) * spawnRadius;
+      
+      for (let attempts = 0; attempts < 8; attempts++) {
+        const testAngle = angle + (attempts * Math.PI / 4);
+        const testX = player.x + Math.cos(testAngle) * spawnRadius;
+        const testY = player.y + Math.sin(testAngle) * spawnRadius;
+        
+        if (canMove(testX, testY, 30)) {
+          spawnX = testX;
+          spawnY = testY;
+          break;
+        }
+      }
+      
+      const soldier = createAttackSoldier(spawnX, spawnY);
+      soldiers.push(soldier);
+      attackSummoned++;
     }
     
     inventory.attackSouls -= attackSummoned;
@@ -1377,7 +1627,7 @@ function toggleMassSummon() {
     inventory.mageSouls += mageCount;
     
     soldiers.length = 0;
-    magicProjectiles.length = [];
+    magicProjectiles.length = 0;
     
     soldiersSummoned = false;
     console.log(`${attackCount} soldados de ataque e ${mageCount} magos despawnados. Almas devolvidas.`);
@@ -1455,15 +1705,12 @@ function collectItemAuto(item, index) {
 
 function updateSummonButton() {
   const summonBtn = document.getElementById('summon');
-  const soulsDisplay = document.querySelector('.souls-display');
   const totalSouls = inventory.attackSouls + inventory.mageSouls;
   
   if (totalSouls > 0 || soldiersSummoned) {
     summonBtn.disabled = false;
-    soulsDisplay.classList.add('active');
   } else {
     summonBtn.disabled = true;
-    soulsDisplay.classList.remove('active');
   }
 }
 
@@ -1612,82 +1859,9 @@ function gameOver(){
   }, 100);
 }
 
-/* CAMERA E MINIMAPA */
+/* CAMERA */
 const camera = {x: 0, y: 0};
 let lastTime = 0;
-
-const minimap = {
-  x: 10,
-  y: 10,
-  width: 150,
-  height: 150,
-  scale: 0.05
-};
-
-function drawMinimap() {
-  const { x, y, width, height, scale } = minimap;
-  
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  ctx.fillRect(x, y, width, height);
-  ctx.strokeStyle = 'white';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x, y, width, height);
-  
-  for(let ty = 0; ty < map.length; ty++) {
-    for(let tx = 0; tx < map[0].length; tx++) {
-      if(map[ty][tx] === 1) {
-        ctx.fillStyle = '#555';
-        ctx.fillRect(x + tx * scale, y + ty * scale, scale, scale);
-      }
-    }
-  }
-  
-  ctx.fillStyle = 'red';
-  enemies.forEach(e => {
-    if(e.life <= 0) return;
-    const enemyMapX = x + (e.x / TILE) * scale;
-    const enemyMapY = y + (e.y / TILE) * scale;
-    ctx.beginPath();
-    ctx.arc(enemyMapX, enemyMapY, 2, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  
-  ctx.fillStyle = 'blue';
-  soldiers.forEach(s => {
-    if(s.life <= 0) return;
-    const soldierMapX = x + (s.x / TILE) * scale;
-    const soldierMapY = y + (s.y / TILE) * scale;
-    ctx.beginPath();
-    ctx.arc(soldierMapX, soldierMapY, 2, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  
-  ctx.fillStyle = 'orange';
-  npcs.forEach(n => {
-    if(n.life <= 0) return;
-    const npcMapX = x + (n.x / TILE) * scale;
-    const npcMapY = y + (n.y / TILE) * scale;
-    ctx.beginPath();
-    ctx.arc(npcMapX, npcMapY, 2, 0, Math.PI * 2);
-    ctx.fill();
-  });
-  
-  if (sword.active) {
-    ctx.fillStyle = 'cyan';
-    const swordMapX = x + (sword.x / TILE) * scale;
-    const swordMapY = y + (sword.y / TILE) * scale;
-    ctx.beginPath();
-    ctx.arc(swordMapX, swordMapY, 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  
-  ctx.fillStyle = 'white';
-  const playerMapX = x + (player.x / TILE) * scale;
-  const playerMapY = y + (player.y / TILE) * scale;
-  ctx.beginPath();
-  ctx.arc(playerMapX, playerMapY, 3, 0, Math.PI * 2);
-  ctx.fill();
-}
 
 /* INTERFACE DO JOGO */
 const statusBtn = document.getElementById('statusBtn');
@@ -1722,7 +1896,6 @@ function updateGameUI() {
   bulletsCount.textContent = inventory.bullets;
   soldiersCount.textContent = aliveSoldiers;
   enemiesAlive.textContent = `${aliveEnemies}/200`;
-  // MODIFICADO: de 40 para 10
   npcsAliveElement.textContent = `${aliveNPCs}/10`;
   spawnTimer.textContent = timeToSpawn;
   
@@ -1753,9 +1926,161 @@ function updateGameUI() {
     (sword.attackMode === 'pursuit' ? 'PERSEGUINDO INIMIGOS' : 'ÓRBITA') : 
     'DESATIVADA';
   swordBtn.title = `Espada: ${modeText}`;
+  
+  // Atualizar status do boss
+  if (boss) {
+    document.getElementById('bossHealth').textContent = `${boss.life}/${boss.maxLife}`;
+  } else {
+    document.getElementById('bossHealth').textContent = '0/0';
+  }
 }
 
-/* LOOP PRINCIPAL DO JOGO */
+/* FUNÇÃO DE ATUALIZAÇÃO DO BOSS */
+function updateBoss() {
+  if (!boss) return;
+  
+  // Movimentação do boss
+  const target = boss.findTarget();
+  const moved = moveIntelligently(boss, target.x, target.y);
+  
+  // Atualizar estado de movimento para animação
+  boss.moving = moved;
+  
+  // Atualizar animação do boss
+  enemyAnimationManager.updateAnimation(boss);
+  
+  // Ataque de fogo
+  if (boss.attackCooldown <= 0) {
+    boss.fireAttack();
+  } else {
+    boss.attackCooldown--;
+    // Resetar animação de ataque após o tempo
+    if (boss.attackAnimationTimer > 0) {
+      boss.attackAnimationTimer--;
+      if (boss.attackAnimationTimer <= 0) {
+        boss.isAttacking = false;
+      }
+    }
+  }
+  
+  // Atualizar fireballs
+  for (let i = bossFireballs.length - 1; i >= 0; i--) {
+    const fb = bossFireballs[i];
+    fb.x += fb.vx;
+    fb.y += fb.vy;
+    fb.life--;
+    
+    // Colisão com player
+    const dx = player.x + player.size/2 - fb.x;
+    const dy = player.y + player.size/2 - fb.y;
+    const distance = Math.hypot(dx, dy);
+    
+    if (distance < player.size/2 + fb.radius) {
+      player.life -= fb.damage;
+      bossFireballs.splice(i, 1);
+      if (player.life <= 0) gameOver();
+      continue;
+    }
+    
+    // Colisão com soldados
+    soldiers.forEach(s => {
+      if (s.life <= 0) return;
+      const dx2 = s.x + s.size/2 - fb.x;
+      const dy2 = s.y + s.size/2 - fb.y;
+      const distance2 = Math.hypot(dx2, dy2);
+      
+      if (distance2 < s.size/2 + fb.radius) {
+        s.life -= fb.damage;
+        bossFireballs.splice(i, 1);
+      }
+    });
+    
+    // Remover fireballs antigas
+    if (fb.life <= 0 || fb.x < 0 || fb.x > worldW || fb.y < 0 || fb.y > worldH) {
+      bossFireballs.splice(i, 1);
+    }
+  }
+  
+  // Verificar se boss morreu
+  if (boss.life <= 0) {
+    // Dropar loot especial
+    for (let i = 0; i < 10; i++) {
+      dropLoot(boss.x + Math.random() * 100 - 50, boss.y + Math.random() * 100 - 50);
+    }
+    boss = null;
+    bossFireballs = [];
+    document.getElementById('bossSpawn').classList.remove('active');
+    document.getElementById('bossSpawn').title = 'BOSS: MORTO (Clique para spawnar)';
+    document.getElementById('bossStatus').textContent = 'MORTO';
+    document.getElementById('bossStatus').style.color = '#ff0000';
+  }
+}
+
+/* FUNÇÃO DE DESENHO DO BOSS - VERSÃO CORRIGIDA (SEM BOLA LILÁS) */
+function drawBoss() {
+  if (!boss) return;
+  
+  // Atualizar coordenadas do sprite do boss
+  const spriteCoords = enemyAnimationManager.getSpriteCoordinates(boss);
+  
+  const drawX = boss.x - camera.x - (boss.drawWidth - boss.size)/2;
+  const drawY = boss.y - camera.y - (boss.drawHeight - boss.size)/2;
+  
+  // Usar sprite do boss
+  if (bossImageLoaded) {
+    ctx.drawImage(
+      bossSprite,
+      spriteCoords.sx, spriteCoords.sy,
+      spriteCoords.frameWidth, spriteCoords.frameHeight,
+      drawX, drawY,
+      boss.drawWidth, boss.drawHeight
+    );
+  } else {
+    // Fallback se a imagem não carregar
+    ctx.fillStyle = '#8b5cf6';
+    ctx.beginPath();
+    ctx.arc(boss.x - camera.x + boss.size/2, boss.y - camera.y + boss.size/2, boss.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // Barra de vida lilás
+  ctx.fillStyle = "black";
+  ctx.fillRect(boss.x - camera.x, boss.y - camera.y - 20, boss.size, 8);
+  ctx.fillStyle = "#8b5cf6";
+  ctx.fillRect(boss.x - camera.x, boss.y - camera.y - 20, (boss.life/boss.maxLife) * boss.size, 8);
+  
+  // Apenas o contorno normal (sem brilho)
+  ctx.strokeStyle = '#8b5cf6';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(boss.x - camera.x + boss.size/2, boss.y - camera.y + boss.size/2, boss.size/2, 0, Math.PI * 2);
+  ctx.stroke();
+  
+  // Desenhar fireballs
+  bossFireballs.forEach(fb => {
+    // Efeito de fogo
+    const gradient = ctx.createRadialGradient(
+      fb.x - camera.x, fb.y - camera.y, 0,
+      fb.x - camera.x, fb.y - camera.y, fb.radius
+    );
+    gradient.addColorStop(0, '#ff6b00');
+    gradient.addColorStop(0.7, '#ff0000');
+    gradient.addColorStop(1, 'transparent');
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(fb.x - camera.x, fb.y - camera.y, fb.radius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Rastro de fogo
+    ctx.fillStyle = 'rgba(255, 100, 0, 0.3)';
+    ctx.beginPath();
+    ctx.arc(fb.x - camera.x, fb.y - camera.y, fb.radius * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+/* LOOP PRINCIPAL DO JOGO - VERSÃO CORRIGIDA */
 function update(currentTime = 0){
   if(!gameRunning) return;
   
@@ -1797,7 +2122,10 @@ function update(currentTime = 0){
     player.attackCooldown--;
   }
   
-  // Atualizar inimigos - MODIFICADO PARA ANIMAÇÃO
+  // Atualizar animação do player
+  animationManager.updateAnimation(player);
+  
+  // Atualizar inimigos
   enemies.forEach(e => {
     if(e.life <= 0) return;
     
@@ -1838,7 +2166,13 @@ function update(currentTime = 0){
         e.isAttacking = false;
       }
     }
+    
+    // Atualizar animação do inimigo
+    enemyAnimationManager.updateAnimation(e);
   });
+  
+  // Atualizar boss
+  updateBoss();
   
   // Atualizar soldados
   soldiers.forEach((s, sIndex) => {
@@ -1848,7 +2182,7 @@ function update(currentTime = 0){
       return;
     }
     
-    if (s.targetEnemy && (s.targetEnemy.life <= 0 || s.targetEnemy.targetedBy !== s.id)) {
+    if (s.targetEnemy && (s.targetEnemy.life <= 0 || (s.targetEnemy !== boss && s.targetEnemy.targetedBy !== s.id))) {
       s.releaseTarget();
     }
     
@@ -1903,9 +2237,12 @@ function update(currentTime = 0){
     if (s.isAttacking && s.attackCooldown <= 30) {
       s.isAttacking = false;
     }
+    
+    // Atualizar animação do soldado
+    animationManager.updateAnimation(s);
   });
   
-  // Atualizar NPCs
+  // ATUALIZAR NPCS COM COMPORTAMENTO MELHORADO
   npcs.forEach((npc, index) => {
     if (npc.life <= 0) {
       npcs.splice(index, 1);
@@ -1916,19 +2253,31 @@ function update(currentTime = 0){
     
     if (nearestEnemy) {
       if (npc.hasPower) {
+        // NPC com poder: ataca à distância
         const dx = nearestEnemy.x - npc.x;
         const dy = nearestEnemy.y - npc.y;
         const distance = Math.hypot(dx, dy);
         
-        if (distance < 100) {
+        // Se estiver dentro do alcance de ataque, ataca
+        if (distance < 150 && npc.magicCooldown <= 0) {
+          npc.magicAttack(nearestEnemy);
+        }
+        
+        // Movimento: mantém distância
+        if (distance < 80) {
           const retreatX = npc.x - (dx / distance) * npc.speed;
           const retreatY = npc.y - (dy / distance) * npc.speed;
           if (canMove(retreatX, npc.y, npc.size)) npc.x = retreatX;
           if (canMove(npc.x, retreatY, npc.size)) npc.y = retreatY;
+          npc.moving = true;
+        } else if (distance > 120) {
+          // Aproxima-se se estiver muito longe
+          moveIntelligently(npc, nearestEnemy.x, nearestEnemy.y);
+        } else {
+          npc.moving = false;
         }
-        
-        npc.moving = distance > 10;
       } else {
+        // NPC sem poder: foge
         if (npc.fleeCooldown <= 0) {
           const dx = nearestEnemy.x - npc.x;
           const dy = nearestEnemy.y - npc.y;
@@ -1948,6 +2297,16 @@ function update(currentTime = 0){
       npc.moving = false;
     }
     
+    // Atualizar cooldown de magia
+    if (npc.magicCooldown > 0) {
+      npc.magicCooldown--;
+      // Resetar animação de ataque após cooldown
+      if (npc.magicCooldown <= 30) {
+        npc.isAttacking = false;
+      }
+    }
+    
+    // Verificar colisão com inimigos
     enemies.forEach(e => {
       if (e.life <= 0) return;
       
@@ -1962,6 +2321,9 @@ function update(currentTime = 0){
     
     if (npc.attackCooldown > 0) npc.attackCooldown--;
     if (npc.fleeCooldown > 0) npc.fleeCooldown--;
+    
+    // Atualizar animação do NPC
+    animationManager.updateAnimation(npc);
   });
   
   // Atualizar tiros
@@ -1972,6 +2334,18 @@ function update(currentTime = 0){
     if (b.x < 0 || b.x > worldW || b.y < 0 || b.y > worldH) {
       bullets.splice(bi, 1);
       return;
+    }
+    
+    // Colisão com boss
+    if (boss) {
+      const dx = boss.x + boss.size/2 - b.x;
+      const dy = boss.y + boss.size/2 - b.y;
+      const d = Math.hypot(dx, dy);
+      if (d < boss.size/2) {
+        boss.life -= BULLET_DAMAGE;
+        bullets.splice(bi, 1);
+        return;
+      }
     }
     
     enemies.forEach((e, ei) => {
@@ -1990,8 +2364,11 @@ function update(currentTime = 0){
     });
   });
   
-  // Atualizar projéteis mágicos
+  // Atualizar projéteis mágicos de soldados
   updateMagicProjectiles();
+  
+  // Atualizar projéteis mágicos de NPCs
+  updateNPCMagicProjectiles();
   
   if(player.hitCooldown > 0) player.hitCooldown--;
   
@@ -2014,7 +2391,7 @@ function update(currentTime = 0){
   requestAnimationFrame(update);
 }
 
-/* FUNÇÃO DE DESENHO */
+/* FUNÇÃO DE DESENHO - VERSÃO CORRIGIDA */
 function draw(){
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
@@ -2076,8 +2453,6 @@ function draw(){
   npcs.forEach(npc => {
     if (npc.life <= 0) return;
     
-    // Atualizar animação do NPC
-    animationManager.updateAnimation(npc);
     const spriteCoords = animationManager.getSpriteCoordinates(npc);
     
     const drawX = npc.x - camera.x - (npc.drawWidth - npc.size)/2;
@@ -2101,24 +2476,29 @@ function draw(){
     ctx.fillRect(npc.x - camera.x, npc.y - camera.y - 8, npc.size, 4);
     
     if (npc.hasPower) {
+      // NPC com poder tem barra de vida amarela
       ctx.fillStyle = "yellow";
       ctx.fillRect(npc.x - camera.x, npc.y - camera.y - 8, (npc.life/npc.maxLife) * npc.size, 4);
-      ctx.shadowColor = 'yellow';
-      ctx.shadowBlur = 10;
-      ctx.fillRect(npc.x - camera.x, npc.y - camera.y - 8, (npc.life/npc.maxLife) * npc.size, 4);
-      ctx.shadowBlur = 0;
     } else {
       ctx.fillStyle = "green";
       ctx.fillRect(npc.x - camera.x, npc.y - camera.y - 8, (npc.life/npc.maxLife) * npc.size, 4);
     }
   });
   
+  // Desenhar projéteis mágicos dos NPCs
+  ctx.fillStyle = "magenta";
+  ctx.strokeStyle = "white";
+  npcMagicProjectiles.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x - camera.x, p.y - camera.y, p.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+  
   // Desenhar soldados
   soldiers.forEach(s => {
     if (s.life <= 0) return;
     
-    // Atualizar animação do soldado
-    animationManager.updateAnimation(s);
     const spriteCoords = animationManager.getSpriteCoordinates(s);
     
     const drawX = s.x - camera.x - (s.drawWidth - s.size)/2;
@@ -2137,14 +2517,14 @@ function draw(){
       ctx.fillRect(s.x - camera.x, s.y - camera.y, s.size, s.size);
     }
     
-    // Barra de vida
+    // Barra de vida - VERMELHA para magos
     ctx.fillStyle = "black";
     ctx.fillRect(s.x - camera.x, s.y - camera.y - 8, s.size, 4);
     ctx.fillStyle = s.type === 'mage' ? "red" : "cyan";
     ctx.fillRect(s.x - camera.x, s.y - camera.y - 8, (s.life/s.maxLife) * s.size, 4);
   });
   
-  // Desenhar projéteis mágicos
+  // Desenhar projéteis mágicos dos soldados
   ctx.fillStyle = "purple";
   ctx.strokeStyle = "white";
   magicProjectiles.forEach(p => {
@@ -2152,21 +2532,12 @@ function draw(){
     ctx.arc(p.x - camera.x, p.y - camera.y, p.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    
-    ctx.shadowColor = 'purple';
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    ctx.arc(p.x - camera.x, p.y - camera.y, p.radius/2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
   });
   
-  // DESENHAR INIMIGOS COM NOVA ANIMAÇÃO REDELFO
+  // Desenhar inimigos
   enemies.forEach(e => {
     if(e.life <= 0) return;
     
-    // Atualizar animação do inimigo REDELFO
-    enemyAnimationManager.updateAnimation(e);
     const spriteCoords = enemyAnimationManager.getSpriteCoordinates(e);
     
     const drawX = e.x - camera.x - (e.drawWidth - e.size)/2;
@@ -2194,6 +2565,9 @@ function draw(){
     ctx.fillRect(e.x - camera.x, e.y - camera.y - 8, (e.life/e.maxLife) * e.size, 4);
   });
   
+  // Desenhar boss
+  drawBoss();
+  
   // Desenhar rastro da espada
   if (sword.active && sword.trail.length > 1) {
     for (let i = 0; i < sword.trail.length - 1; i++) {
@@ -2219,24 +2593,12 @@ function draw(){
       ctx.beginPath();
       ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size, 0, Math.PI * 2);
       ctx.fill();
-      
-      ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'rgba(100, 150, 255, 0.7)';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
     });
   }
   
   // Desenhar espada
   const drawSwordX = sword.x - camera.x;
   const drawSwordY = sword.y - camera.y;
-  
-  if (sword.active) {
-    ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'blue';
-    ctx.shadowBlur = sword.attackMode === 'pursuit' ? 20 : 15;
-  }
   
   if (swordSprite.complete) {
     ctx.save();
@@ -2263,11 +2625,7 @@ function draw(){
     ctx.stroke();
   }
   
-  ctx.shadowBlur = 0;
-  
   // Desenhar jogador
-  // Atualizar animação do jogador
-  animationManager.updateAnimation(player);
   const playerSpriteCoords = animationManager.getSpriteCoordinates(player);
   
   const playerDrawX = player.x - camera.x - (player.drawWidth - player.size)/2;
@@ -2295,9 +2653,6 @@ function draw(){
     ctx.fill();
     ctx.stroke();
   });
-  
-  // Desenhar minimapa
-  drawMinimap();
   
   // Atualizar UI
   updateGameUI();
