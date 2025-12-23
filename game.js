@@ -2,10 +2,12 @@ const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
 const TILE = 32;
-const BULLET_DAMAGE = 50;
+
+// ========== DANO 10x MAIS FORTE ==========
+const BULLET_DAMAGE = 500; // Era 50, agora 500 (10x mais forte)
 const ENEMY_DAMAGE = 15;
 const SOLDIER_DAMAGE = 36;
-const MAGE_DAMAGE = 200;
+const MAGE_DAMAGE = 2000; // Era 200, agora 2000 (10x mais forte)
 let gameRunning = true;
 
 // Limitação de soldados
@@ -20,6 +22,7 @@ const NPC_SPAWN_COUNT = 10;
 const NPC_SPAWN_INTERVAL = 10000;
 let npcSpawnTimer = 0;
 const NPC_POWER_CHANCE = 0.25;
+const NPC_HEAL_THRESHOLD = 0.3; // 30% de vida para buscar cura
 
 // ========== BOSS ==========
 let boss = null;
@@ -28,7 +31,11 @@ const BOSS_SPAWN_HEALTH = 5000;
 const BOSS_FIREBALL_DAMAGE = 30;
 const BOSS_FIREBALL_SPEED = 4;
 
-/* MAPA */
+// ========== SISTEMA DE LOG ==========
+let gameLog = [];
+const MAX_LOG_ENTRIES = 15;
+
+// ========== MAPA ==========
 const map = [
   [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
   [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
@@ -66,23 +73,15 @@ const map = [
 const worldW = map[0].length * TILE;
 const worldH = map.length * TILE;
 
-/* CARREGAR IMAGENS PRINCIPAIS */
+// ========== CARREGAR IMAGENS ==========
 const iceSprite = new Image();
 iceSprite.src = 'iceslayer.png';
-
-// SWORD - ESPADA GIRATÓRIA
 const swordSprite = new Image();
 swordSprite.src = 'sword.png';
-
-// Carregar sprite do NPC (usando a mesma imagem)
 const npcSprite = new Image();
 npcSprite.src = 'iceslayer.png';
-
-// Carregar sprite do inimigo REDELFO
 const enemySprite = new Image();
 enemySprite.src = 'redelfo.png';
-
-// Carregar sprite do BOSS
 const bossSprite = new Image();
 bossSprite.src = 'boss.png';
 
@@ -90,26 +89,12 @@ let iceImageLoaded = false;
 let enemyImageLoaded = false;
 let bossImageLoaded = false;
 
-iceSprite.onload = function() {
-  iceImageLoaded = true;
-  console.log("IceSlayer sprite carregado (182x1280)");
-};
+iceSprite.onload = () => iceImageLoaded = true;
+enemySprite.onload = () => enemyImageLoaded = true;
+bossSprite.onload = () => bossImageLoaded = true;
+swordSprite.onload = () => console.log("Sword sprite carregado");
 
-enemySprite.onload = function() {
-  enemyImageLoaded = true;
-  console.log("Redelfo sprite carregado (182x1280)");
-};
-
-bossSprite.onload = function() {
-  bossImageLoaded = true;
-  console.log("Boss sprite carregado (182x1280)");
-};
-
-swordSprite.onload = function() {
-  console.log("Sword sprite carregado");
-};
-
-/* SPAWN EM TILE LIVRE */
+// ========== FUNÇÕES BÁSICAS ==========
 function getRandomFreePosition(size){
   let x, y;
   do{
@@ -124,7 +109,85 @@ function getRandomFreePosition(size){
   return {x, y};
 }
 
-/* SISTEMA DE LOOT - COLETA AUTOMÁTICA */
+function isWall(px, py){
+  const tx = Math.floor(px/TILE);
+  const ty = Math.floor(py/TILE);
+  if(ty < 0 || ty >= map.length || tx < 0 || tx >= map[0].length) return true;
+  return map[ty][tx] === 1;
+}
+
+function canMove(x, y, s){
+  return !isWall(x, y) && !isWall(x + s, y) && !isWall(x, y + s) && !isWall(x + s, y + s);
+}
+
+function moveIntelligently(entity, targetX, targetY) {
+  const dx = targetX - entity.x;
+  const dy = targetY - entity.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  
+  if (distance < 10) {
+    entity.moving = false;
+    return true;
+  }
+  
+  const dirX = dx / distance;
+  const dirY = dy / distance;
+  const newX = entity.x + dirX * entity.speed;
+  const newY = entity.y + dirY * entity.speed;
+  
+  if (Math.abs(dx) > Math.abs(dy)) {
+    entity.lastDirection = dx > 0 ? 'right' : 'left';
+  } else {
+    entity.lastDirection = dy > 0 ? 'down' : 'up';
+  }
+  
+  if (canMove(newX, newY, entity.size)) {
+    entity.x = newX;
+    entity.y = newY;
+    entity.stuckTimer = 0;
+    entity.moving = true;
+    return true;
+  } else {
+    if (!entity.stuckTimer) entity.stuckTimer = 0;
+    entity.stuckTimer++;
+    
+    if (entity.stuckTimer > 20) {
+      entity.stuckTimer = 0;
+      entity.moving = false;
+      return false;
+    }
+    
+    if (canMove(newX, entity.y, entity.size)) {
+      entity.x = newX;
+      entity.stuckTimer = 0;
+      entity.moving = true;
+      return true;
+    } else if (canMove(entity.x, newY, entity.size)) {
+      entity.y = newY;
+      entity.stuckTimer = 0;
+      entity.moving = true;
+      return true;
+    }
+    
+    entity.moving = false;
+    return false;
+  }
+}
+
+// ========== SISTEMA DE LOG ==========
+function addLog(message) {
+  const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+  gameLog.unshift(`[${time}] ${message}`);
+  if (gameLog.length > MAX_LOG_ENTRIES) gameLog.pop();
+  
+  // Atualizar UI se existir
+  const logElement = document.getElementById('gameLog');
+  if (logElement) {
+    logElement.innerHTML = gameLog.map(entry => `<div>${entry}</div>`).join('');
+  }
+}
+
+// ========== SISTEMA DE LOOT ==========
 let lootItems = [];
 let inventory = {
   herbs: 0,
@@ -133,7 +196,6 @@ let inventory = {
   mageSouls: 5
 };
 
-// Adicionar sprites para os itens
 const herbSprite = new Image();
 herbSprite.src = 'https://cdn-icons-png.flaticon.com/512/684/684908.png';
 const bulletSprite = new Image();
@@ -141,7 +203,6 @@ bulletSprite.src = 'https://cdn-icons-png.flaticon.com/512/2303/2303971.png';
 const soulSprite = new Image();
 soulSprite.src = 'https://cdn-icons-png.flaticon.com/512/2737/2737417.png';
 
-// Função para dropar loot quando inimigo morre
 function dropLoot(enemyX, enemyY) {
   if (Math.random() < 0.7) {
     const rand = Math.random();
@@ -189,7 +250,7 @@ function dropLoot(enemyX, enemyY) {
   }
 }
 
-/* SISTEMA DE ANIMAÇÃO PARA PERSONAGENS (ICESLAYER) */
+// ========== ANIMAÇÕES ==========
 class AnimationManager {
   constructor() {
     this.spriteWidth = 182;
@@ -199,19 +260,13 @@ class AnimationManager {
     this.frameWidth = this.spriteWidth / this.cols;
     this.frameHeight = this.spriteHeight / this.rows;
     
-    // Definições das animações
     this.animations = {
-      // Idle animations
       idle_down: { startRow: 0, endRow: 1, startCol: 0, endCol: 3, frames: 8, speed: 10 },
       idle_up: { startRow: 2, endRow: 2, startCol: 0, endCol: 3, frames: 4, speed: 10 },
-      
-      // Walk animations
       walk_right: { startRow: 3, endRow: 5, startCol: 0, endCol: 1, frames: 6, speed: 8 },
       walk_left: { startRow: 5, endRow: 7, startCol: 2, endCol: 3, frames: 6, speed: 8 },
       walk_down: { startRow: 8, endRow: 10, startCol: 0, endCol: 1, frames: 6, speed: 8 },
       walk_up: { startRow: 10, endRow: 12, startCol: 2, endCol: 3, frames: 6, speed: 8 },
-      
-      // Attack animations
       attack_left: { startRow: 13, endRow: 15, startCol: 0, endCol: 2, frames: 9, speed: 5 },
       attack_right: { startRow: 15, endRow: 17, startCol: 3, endCol: 1, frames: 9, speed: 5 },
       attack_down: { startRow: 18, endRow: 20, startCol: 2, endCol: 0, frames: 9, speed: 5 },
@@ -225,12 +280,7 @@ class AnimationManager {
     } else if (entity.moving) {
       return `walk_${entity.lastDirection}`;
     } else {
-      // Para idle, verifica a última direção
-      if (entity.lastDirection === 'up') {
-        return 'idle_up';
-      } else {
-        return 'idle_down';
-      }
+      return entity.lastDirection === 'up' ? 'idle_up' : 'idle_down';
     }
   }
   
@@ -245,13 +295,11 @@ class AnimationManager {
     if (entity.animationTimer >= anim.speed) {
       entity.currentFrame = (entity.currentFrame || 0) + 1;
       
-      // Se atingiu o fim da animação de ataque, reseta
       if (entity.isAttacking && entity.currentFrame >= anim.frames) {
         entity.isAttacking = false;
         entity.currentFrame = 0;
       }
       
-      // Loop da animação
       if (entity.currentFrame >= anim.frames) {
         entity.currentFrame = 0;
       }
@@ -290,130 +338,16 @@ class AnimationManager {
   }
 }
 
-/* SISTEMA DE ANIMAÇÃO PARA INIMIGOS (REDELFO) */
-class EnemyAnimationManager {
+class EnemyAnimationManager extends AnimationManager {
   constructor() {
-    this.spriteWidth = 182;
-    this.spriteHeight = 1280;
-    this.cols = 4;
-    this.rows = 24;
-    this.frameWidth = this.spriteWidth / this.cols;
-    this.frameHeight = this.spriteHeight / this.rows;
-    
-    // Definições das animações do inimigo REDELFO
-    this.animations = {
-      // 1. Parado após andar para baixo/esquerda/direita
-      idle_down: { startRow: 0, endRow: 1, startCol: 0, endCol: 3, frames: 8, speed: 10 },
-      
-      // 2. Parado após andar para cima
-      idle_up: { startRow: 2, endRow: 2, startCol: 0, endCol: 3, frames: 4, speed: 10 },
-      
-      // 3. Andando para direita
-      walk_right: { startRow: 3, endRow: 5, startCol: 0, endCol: 1, frames: 6, speed: 8 },
-      
-      // 4. Andando para esquerda
-      walk_left: { startRow: 5, endRow: 7, startCol: 2, endCol: 3, frames: 6, speed: 8 },
-      
-      // 5. Andando para baixo
-      walk_down: { startRow: 8, endRow: 10, startCol: 0, endCol: 1, frames: 6, speed: 8 },
-      
-      // 6. Andando para cima
-      walk_up: { startRow: 10, endRow: 12, startCol: 2, endCol: 3, frames: 6, speed: 8 },
-      
-      // 7. Atacar + mover para esquerda
-      attack_left: { startRow: 13, endRow: 15, startCol: 0, endCol: 2, frames: 9, speed: 5 },
-      
-      // 8. Atacar + mover para direita
-      attack_right: { startRow: 15, endRow: 17, startCol: 3, endCol: 1, frames: 9, speed: 5 },
-      
-      // 9. Atacar + mover para baixo
-      attack_down: { startRow: 18, endRow: 20, startCol: 2, endCol: 0, frames: 9, speed: 5 },
-      
-      // 10. Atacar + mover para cima
-      attack_up: { startRow: 21, endRow: 23, startCol: 1, endCol: 3, frames: 9, speed: 5 }
-    };
-  }
-  
-  getAnimationState(entity) {
-    // Verifica se o inimigo está atacando
-    if (entity.isAttacking || entity.attackCooldown > 30) {
-      return `attack_${entity.lastDirection}`;
-    } 
-    // Verifica se está se movendo
-    else if (entity.moving) {
-      return `walk_${entity.lastDirection}`;
-    } 
-    // Se não está nem atacando nem se movendo, está idle
-    else {
-      // Verifica a última direção
-      if (entity.lastDirection === 'up') {
-        return 'idle_up';
-      } else {
-        return 'idle_down';
-      }
-    }
-  }
-  
-  updateAnimation(entity) {
-    const animState = this.getAnimationState(entity);
-    const anim = this.animations[animState];
-    
-    if (!anim || !anim.frames) return;
-    
-    // Inicializa o timer se não existir
-    entity.animationTimer = (entity.animationTimer || 0) + 1;
-    
-    // Atualiza frame no tempo certo
-    if (entity.animationTimer >= anim.speed) {
-      entity.currentFrame = (entity.currentFrame || 0) + 1;
-      
-      // Se atingiu o fim da animação, faz loop
-      if (entity.currentFrame >= anim.frames) {
-        entity.currentFrame = 0;
-      }
-      
-      entity.animationTimer = 0;
-    }
-  }
-  
-  getSpriteCoordinates(entity) {
-    const animState = this.getAnimationState(entity);
-    const anim = this.animations[animState];
-    
-    if (!anim) return { sx: 0, sy: 0 };
-    
-    const frame = entity.currentFrame || 0;
-    const totalCols = Math.abs(anim.endCol - anim.startCol) + 1;
-    
-    // Calcula offset baseado no frame atual
-    const rowOffset = Math.floor(frame / totalCols);
-    const colOffset = frame % totalCols;
-    
-    // Calcula linha e coluna reais
-    const row = anim.startRow + Math.min(rowOffset, anim.endRow - anim.startRow);
-    let col;
-    
-    if (anim.startCol <= anim.endCol) {
-      col = anim.startCol + colOffset;
-    } else {
-      // Para animações que vão da direita para esquerda
-      col = anim.startCol - colOffset;
-    }
-    
-    return {
-      sx: col * this.frameWidth,
-      sy: row * this.frameHeight,
-      frameWidth: this.frameWidth,
-      frameHeight: this.frameHeight
-    };
+    super();
   }
 }
 
-// Instâncias globais dos gerenciadores de animação
 const animationManager = new AnimationManager();
 const enemyAnimationManager = new EnemyAnimationManager();
 
-/* SISTEMA DE SPAWN DE INIMIGOS */
+// ========== SISTEMA DE SPAWN DE INIMIGOS ==========
 const MAX_ENEMIES = 200;
 const ENEMY_SPAWN_COUNT = 50;
 const ENEMY_SPAWN_INTERVAL = 10000;
@@ -443,22 +377,15 @@ function spawnEnemies(count) {
       attackCooldown: 0,
       wasAlive: true,
       targetedBy: null,
-      
-      // Propriedades de animação para inimigos REDELFO
       lastDirection: 'down',
       moving: true,
       isAttacking: false,
       currentFrame: 0,
       animationTimer: 0,
-      
-      // Nova propriedade para controlar estado de ataque
       attackAnimationTimer: 0,
       
       findNearestTarget: function() {
-        // Priorizar o boss se existir
-        if (boss) {
-          return boss;
-        }
+        if (boss) return boss;
         
         let nearest = player;
         let minDist = Math.hypot(player.x - this.x, player.y - this.y);
@@ -487,7 +414,7 @@ function spawnEnemies(count) {
   }
 }
 
-/* PLAYER COM NOVA ANIMAÇÃO */
+// ========== PLAYER ==========
 const playerSpawn = getRandomFreePosition(30);
 const player = {
   x: playerSpawn.x,
@@ -503,8 +430,6 @@ const player = {
   life: 100,
   maxLife: 100,
   hitCooldown: 0,
-  
-  // Propriedades de animação
   lastDirection: 'down',
   moving: false,
   isAttacking: false,
@@ -512,7 +437,6 @@ const player = {
   animationTimer: 0,
   attackCooldown: 0,
   
-  // Controles de ataque
   updateDirection: function() {
     if (this.vx === 0 && this.vy === 0) {
       this.moving = false;
@@ -529,10 +453,9 @@ const player = {
   }
 };
 
-/* INIMIGOS */
+// ========== INIMIGOS ==========
 let enemies = [];
 
-// Spawn inicial de 5 inimigos
 for(let i = 0; i < 5; i++){
   const pos = getRandomFreePosition(30);
   enemies.push({
@@ -548,22 +471,15 @@ for(let i = 0; i < 5; i++){
     attackCooldown: 0,
     wasAlive: true,
     targetedBy: null,
-    
-    // Propriedades de animação para inimigos REDELFO
     lastDirection: 'down',
     moving: true,
     isAttacking: false,
     currentFrame: 0,
     animationTimer: 0,
-    
-    // Nova propriedade para controlar estado de ataque
     attackAnimationTimer: 0,
     
     findNearestTarget: function() {
-      // Priorizar o boss se existir
-      if (boss) {
-        return boss;
-      }
+      if (boss) return boss;
       
       let nearest = player;
       let minDist = Math.hypot(player.x - this.x, player.y - this.y);
@@ -591,28 +507,231 @@ for(let i = 0; i < 5; i++){
   });
 }
 
-/* SOLDADOS INVO CADOS */
+// ========== SOLDADOS ==========
 let soldiers = [];
 let soldierIdCounter = 0;
 let soldiersSummoned = false;
-
-// Projéteis mágicos de soldados
 let magicProjectiles = [];
-
-// Projéteis mágicos de NPCs
 let npcMagicProjectiles = [];
 
-/* TIROS */
+function createAttackSoldier(spawnX, spawnY) {
+  soldierIdCounter++;
+  const soldierId = soldierIdCounter;
+  
+  return {
+    x: spawnX,
+    y: spawnY,
+    size: 30,
+    drawWidth: 136,
+    drawHeight: 160,
+    speed: 1.5,
+    life: 300,
+    maxLife: 300,
+    stuckTimer: 0,
+    attackCooldown: 0,
+    hitCooldown: 0,
+    id: soldierId,
+    targetEnemy: null,
+    isEngaged: false,
+    type: 'attack',
+    lastDirection: 'down',
+    moving: false,
+    isAttacking: false,
+    currentFrame: 0,
+    animationTimer: 0,
+    
+    // NOVO: Propriedades para coleta inteligente
+    isCollecting: false,
+    targetItem: null,
+    collectionCooldown: 0,
+    
+    findUnassignedEnemy: function() {
+      if (boss) {
+        const dx = boss.x - this.x;
+        const dy = boss.y - this.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance < 300) return boss;
+      }
+      
+      let bestEnemy = null;
+      let minDist = Infinity;
+      let minSoldiersOnSameEnemy = Infinity;
+      
+      enemies.forEach(e => {
+        if(e.life <= 0) return;
+        
+        const dx = e.x - this.x;
+        const dy = e.y - this.y;
+        const distance = Math.hypot(dx, dy);
+        
+        if (distance < 300) {
+          let soldiersOnThisEnemy = 0;
+          soldiers.forEach(s => {
+            if (s !== this && s.targetEnemy === e) soldiersOnThisEnemy++;
+          });
+          
+          if (soldiersOnThisEnemy < minSoldiersOnSameEnemy || 
+              (soldiersOnThisEnemy === minSoldiersOnSameEnemy && distance < minDist)) {
+            bestEnemy = e;
+            minDist = distance;
+            minSoldiersOnSameEnemy = soldiersOnThisEnemy;
+          }
+        }
+      });
+      
+      if (bestEnemy) {
+        this.targetEnemy = bestEnemy;
+        this.isEngaged = true;
+        if (bestEnemy !== boss) bestEnemy.targetedBy = this.id;
+      }
+      
+      return bestEnemy;
+    },
+    
+    attack: function(enemy) {
+      if (this.attackCooldown <= 0) {
+        this.isAttacking = true;
+        this.attackCooldown = 40;
+        enemy.life -= SOLDIER_DAMAGE;
+        
+        if (enemy.life <= 0 && enemy.wasAlive && enemy !== boss) {
+          enemiesKilled++;
+          dropLoot(enemy.x, enemy.y);
+          enemy.wasAlive = false;
+          enemy.targetedBy = null;
+          this.targetEnemy = null;
+          this.isEngaged = false;
+        }
+      }
+    },
+    
+    releaseTarget: function() {
+      if (this.targetEnemy && this.targetEnemy.targetedBy === this.id) {
+        this.targetEnemy.targetedBy = null;
+      }
+      this.targetEnemy = null;
+      this.isEngaged = false;
+    }
+  };
+}
+
+function createMageSoldier(spawnX, spawnY) {
+  soldierIdCounter++;
+  const soldierId = soldierIdCounter;
+  
+  return {
+    x: spawnX,
+    y: spawnY,
+    size: 30,
+    drawWidth: 136,
+    drawHeight: 160,
+    speed: 1.5,
+    life: 300,
+    maxLife: 300,
+    stuckTimer: 0,
+    attackCooldown: 0,
+    hitCooldown: 0,
+    id: soldierId,
+    targetEnemy: null,
+    isEngaged: false,
+    type: 'mage',
+    lastDirection: 'down',
+    moving: false,
+    isAttacking: false,
+    currentFrame: 0,
+    animationTimer: 0,
+    
+    // NOVO: Propriedades para coleta inteligente
+    isCollecting: false,
+    targetItem: null,
+    collectionCooldown: 0,
+    
+    findUnassignedEnemy: function() {
+      if (boss) {
+        const dx = boss.x - this.x;
+        const dy = boss.y - this.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance < 400) return boss;
+      }
+      
+      let bestEnemy = null;
+      let minDist = Infinity;
+      let minSoldiersOnSameEnemy = Infinity;
+      
+      enemies.forEach(e => {
+        if(e.life <= 0) return;
+        
+        const dx = e.x - this.x;
+        const dy = e.y - this.y;
+        const distance = Math.hypot(dx, dy);
+        
+        if (distance < 400) {
+          let soldiersOnThisEnemy = 0;
+          soldiers.forEach(s => {
+            if (s !== this && s.targetEnemy === e) soldiersOnThisEnemy++;
+          });
+          
+          if (soldiersOnThisEnemy < minSoldiersOnSameEnemy || 
+              (soldiersOnThisEnemy === minSoldiersOnSameEnemy && distance < minDist)) {
+            bestEnemy = e;
+            minDist = distance;
+            minSoldiersOnSameEnemy = soldiersOnThisEnemy;
+          }
+        }
+      });
+      
+      if (bestEnemy) {
+        this.targetEnemy = bestEnemy;
+        this.isEngaged = true;
+        if (bestEnemy !== boss) bestEnemy.targetedBy = this.id;
+      }
+      
+      return bestEnemy;
+    },
+    
+    attack: function(enemy) {
+      if (this.attackCooldown <= 0) {
+        this.isAttacking = true;
+        this.attackCooldown = 60;
+        const dx = enemy.x - this.x;
+        const dy = enemy.y - this.y;
+        const distance = Math.hypot(dx, dy) || 1;
+        
+        magicProjectiles.push({
+          x: this.x + this.size/2,
+          y: this.y + this.size/2,
+          targetX: enemy.x,
+          targetY: enemy.y,
+          vx: (dx / distance) * 4,
+          vy: (dy / distance) * 4,
+          radius: 10,
+          damage: MAGE_DAMAGE,
+          owner: this.id
+        });
+      }
+    },
+    
+    releaseTarget: function() {
+      if (this.targetEnemy && this.targetEnemy.targetedBy === this.id) {
+        this.targetEnemy.targetedBy = null;
+      }
+      this.targetEnemy = null;
+      this.isEngaged = false;
+    }
+  };
+}
+
+// ========== TIROS ==========
 const bullets = [];
 
-/* ESPADA GIRATÓRIA */
+// ========== ESPADA GIRATÓRIA (10x MAIS FORTE) ==========
 let sword = {
   active: false,
   radius: 50,
   angle: 0,
   rotationSpeed: 0.05,
   size: 25,
-  damage: 10000,
+  damage: 100000, // ERA 10000, AGORA 100000 (10x MAIS FORTE)
   x: 0,
   y: 0,
   speed: 6,
@@ -633,18 +752,15 @@ let sword = {
   },
   
   findNearestEnemy: function() {
-    let nearest = null;
-    let minDist = Infinity;
-    
-    // Priorizar o boss se existir
     if (boss) {
       const dx = boss.x - this.x;
       const dy = boss.y - this.y;
       const d = Math.hypot(dx, dy);
-      if (d < this.detectionRadius) {
-        return boss;
-      }
+      if (d < this.detectionRadius) return boss;
     }
+    
+    let nearest = null;
+    let minDist = Infinity;
     
     enemies.forEach(e => {
       if (e.life <= 0) return;
@@ -674,7 +790,180 @@ let sword = {
   }
 };
 
-/* BOTÕES DE CONTROLE */
+// ========== NPCs INTELIGENTES ==========
+function spawnNPCs(count) {
+  const currentNPCs = npcs.filter(n => n.life > 0).length;
+  const availableSlots = MAX_NPCS - currentNPCs;
+  
+  if (availableSlots <= 0) return;
+  
+  const spawnCount = Math.min(count, availableSlots);
+  
+  for (let i = 0; i < spawnCount; i++) {
+    const pos = getRandomFreePosition(30);
+    const hasPower = Math.random() < NPC_POWER_CHANCE;
+    
+    npcs.push({
+      x: pos.x,
+      y: pos.y,
+      size: 30,
+      drawWidth: 136,
+      drawHeight: 160,
+      speed: hasPower ? 0.8 : 1.2,
+      life: 100,
+      maxLife: 100,
+      hasPower: hasPower,
+      targetEnemy: null,
+      attackCooldown: 0,
+      fleeCooldown: 0,
+      stuckTimer: 0,
+      lastDirection: 'down',
+      moving: false,
+      isAttacking: false,
+      currentFrame: 0,
+      animationTimer: 0,
+      magicCooldown: 0,
+      
+      // NOVO: Inteligência para busca de cura
+      seekingHerb: false,
+      targetHerb: null,
+      healCooldown: 0,
+      
+      findNearestEnemy: function() {
+        if (boss) {
+          const dx = boss.x - this.x;
+          const dy = boss.y - this.y;
+          const d = Math.hypot(dx, dy);
+          if (d < 300) return boss;
+        }
+        
+        let nearest = null;
+        let minDist = Infinity;
+        
+        enemies.forEach(e => {
+          if (e.life <= 0) return;
+          const dx = e.x - this.x;
+          const dy = e.y - this.y;
+          const d = Math.hypot(dx, dy);
+          if (d < minDist && d < 300) {
+            minDist = d;
+            nearest = e;
+          }
+        });
+        
+        return nearest;
+      },
+      
+      magicAttack: function(enemy) {
+        if (this.magicCooldown <= 0 && enemy) {
+          this.isAttacking = true;
+          this.magicCooldown = 90;
+          
+          const dx = enemy.x - this.x;
+          const dy = enemy.y - this.y;
+          const distance = Math.hypot(dx, dy) || 1;
+          
+          npcMagicProjectiles.push({
+            x: this.x + this.size/2,
+            y: this.y + this.size/2,
+            targetX: enemy.x,
+            targetY: enemy.y,
+            vx: (dx / distance) * 3,
+            vy: (dy / distance) * 3,
+            radius: 8,
+            damage: 100,
+            owner: 'npc'
+          });
+        }
+      },
+      
+      // NOVO: Encontrar erva mais próxima
+      findNearestHerb: function() {
+        let nearest = null;
+        let minDist = Infinity;
+        
+        for (let i = 0; i < lootItems.length; i++) {
+          const item = lootItems[i];
+          if (item.type === 'herb' && !item.collected) {
+            const dx = item.x - this.x;
+            const dy = item.y - this.y;
+            const d = Math.hypot(dx, dy);
+            if (d < minDist) {
+              minDist = d;
+              nearest = { item, index: i, distance: d };
+            }
+          }
+        }
+        
+        return nearest;
+      }
+    });
+  }
+}
+
+// ========== FUNÇÕES DE COLETA INTELIGENTE ==========
+function findNearestItem(entity, excludedItems = []) {
+  let nearest = null;
+  let minDist = Infinity;
+  
+  for (let i = 0; i < lootItems.length; i++) {
+    const item = lootItems[i];
+    if (item.collected || excludedItems.includes(i)) continue;
+    
+    const dx = item.x - entity.x;
+    const dy = item.y - entity.y;
+    const d = Math.hypot(dx, dy);
+    
+    if (d < minDist) {
+      minDist = d;
+      nearest = { item, index: i, distance: d };
+    }
+  }
+  
+  return nearest;
+}
+
+function areEnemiesAlive() {
+  if (boss && boss.life > 0) return true;
+  
+  for (let i = 0; i < enemies.length; i++) {
+    if (enemies[i].life > 0) return true;
+  }
+  
+  return false;
+}
+
+function collectItemByEntity(item, index, collectorName = 'Ally') {
+  if (!lootItems[index] || lootItems[index].collected) return;
+  
+  const collectedItem = lootItems[index];
+  
+  // Coletar item
+  if (collectedItem.type === 'herb') {
+    inventory.herbs++;
+    addLog(`${collectorName} coletou erva!`);
+  } else if (collectedItem.type === 'bullets') {
+    inventory.bullets += collectedItem.quantity || 1;
+    addLog(`${collectorName} coletou ${collectedItem.quantity || 1} balas!`);
+  } else if (collectedItem.type === 'attackSoul') {
+    inventory.attackSouls++;
+    addLog(`${collectorName} coletou alma de guerreiro!`);
+  } else if (collectedItem.type === 'mageSoul') {
+    inventory.mageSouls++;
+    addLog(`${collectorName} coletou alma de mago!`);
+  }
+  
+  // Remover do chão
+  collectedItem.collected = true;
+  lootItems.splice(index, 1);
+  
+  // Atualizar UI
+  updateGameUI();
+  updateInventoryUI();
+  updateSummonButton();
+}
+
+// ========== CONTROLES ==========
 document.getElementById("toggleEnemySpawn").addEventListener("pointerdown", toggleEnemySpawn);
 document.getElementById("toggleNPCSpawn").addEventListener("pointerdown", toggleNPCSpawn);
 document.getElementById("bossSpawn").addEventListener("pointerdown", toggleBoss);
@@ -691,9 +980,11 @@ function toggleEnemySpawn() {
   if (enemySpawnEnabled) {
     btn.classList.add('active');
     btn.title = "Spawn de Inimigos: ATIVADO";
+    addLog("Spawn de inimigos ATIVADO");
   } else {
     btn.classList.remove('active');
     btn.title = "Spawn de Inimigos: DESATIVADO";
+    addLog("Spawn de inimigos DESATIVADO");
   }
 }
 
@@ -704,15 +995,18 @@ function toggleNPCSpawn() {
     btn.classList.add('active');
     btn.title = "Spawn de NPCs: ATIVADO";
     spawnNPCs(NPC_SPAWN_COUNT);
+    addLog("Spawn de NPCs ATIVADO");
   } else {
     btn.classList.remove('active');
     btn.title = "Spawn de NPCs: DESATIVADO";
+    addLog("Spawn de NPCs DESATIVADO");
   }
 }
 
 function toggleBoss() {
   if (!boss) {
     spawnBoss();
+    addLog("BOSS spawnado!");
   } else {
     boss = null;
     bossFireballs = [];
@@ -720,6 +1014,7 @@ function toggleBoss() {
     document.getElementById('bossSpawn').title = 'BOSS: MORTO (Clique para spawnar)';
     document.getElementById('bossStatus').textContent = 'MORTO';
     document.getElementById('bossStatus').style.color = '#ff0000';
+    addLog("BOSS eliminado!");
   }
 }
 
@@ -745,13 +1040,11 @@ function spawnBoss() {
     animationTimer: 0,
     attackAnimationTimer: 0,
     
-    // Ataque de fogo
     fireAttack: function() {
       if (this.attackCooldown <= 0) {
         this.isAttacking = true;
         this.attackAnimationTimer = 15;
         
-        // Dispara 3 fireballs em direções diferentes
         for (let i = 0; i < 3; i++) {
           const angle = Math.atan2(player.y - this.y, player.x - this.x) + (i - 1) * 0.3;
           
@@ -791,28 +1084,18 @@ function toggleSword() {
     sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
     sword.targetEnemy = sword.findNearestEnemy();
     sword.attackMode = sword.targetEnemy ? 'pursuit' : 'orbit';
+    addLog("Espada giratória ATIVADA");
   } else {
     swordBtn.classList.remove('active-mode');
     swordBtn.title = "Espada: DESATIVADA (Clique para ativar)";
     sword.targetEnemy = null;
     sword.isReturning = false;
     sword.attackMode = 'orbit';
+    addLog("Espada giratória DESATIVADA");
   }
 }
 
-/* COLISÃO */
-function isWall(px, py){
-  const tx = Math.floor(px/TILE);
-  const ty = Math.floor(py/TILE);
-  if(ty < 0 || ty >= map.length || tx < 0 || tx >= map[0].length) return true;
-  return map[ty][tx] === 1;
-}
-
-function canMove(x, y, s){
-  return !isWall(x, y) && !isWall(x + s, y) && !isWall(x, y + s) && !isWall(x + s, y + s);
-}
-
-/* JOYSTICK */
+// ========== JOYSTICK ==========
 const joystick = document.getElementById("joystick");
 const thumb = document.getElementById("thumb");
 
@@ -871,21 +1154,17 @@ function endJoystick() {
   player.vy = 0;
 }
 
-/* ATAQUE DO PLAYER */
+// ========== ATAQUE DO PLAYER (10x MAIS FORTE) ==========
 function getNearestEnemy(){
-  let nearest = null;
-  let minDist = Infinity;
-  
-  // Priorizar boss
   if (boss) {
     const dx = boss.x - player.x;
     const dy = boss.y - player.y;
     const d = Math.hypot(dx, dy);
-    if (d < minDist) {
-      minDist = d;
-      nearest = boss;
-    }
+    if (d < 500) return boss;
   }
+  
+  let nearest = null;
+  let minDist = Infinity;
   
   enemies.forEach(e => {
     if(e.life <= 0) return;
@@ -905,7 +1184,7 @@ function shoot(){
   if(!gameRunning) return;
   
   if (inventory.bullets <= 0) {
-    console.log("Sem balas no inventário!");
+    addLog("Sem balas no inventário!");
     return;
   }
   
@@ -936,211 +1215,11 @@ function shoot(){
     vx: dx * 5,
     vy: dy * 5
   });
+  
+  addLog(`Player atirou! Dano: ${BULLET_DAMAGE}`);
 }
 
-/* SISTEMA DE MOVIMENTO INTELIGENTE */
-function moveIntelligently(entity, targetX, targetY) {
-  const dx = targetX - entity.x;
-  const dy = targetY - entity.y;
-  const distance = Math.hypot(dx, dy) || 1;
-  
-  if (distance < 10) {
-    entity.moving = false;
-    return true;
-  }
-  
-  const dirX = dx / distance;
-  const dirY = dy / distance;
-  const newX = entity.x + dirX * entity.speed;
-  const newY = entity.y + dirY * entity.speed;
-  
-  // Atualizar direção para animação
-  if (Math.abs(dx) > Math.abs(dy)) {
-    entity.lastDirection = dx > 0 ? 'right' : 'left';
-  } else {
-    entity.lastDirection = dy > 0 ? 'down' : 'up';
-  }
-  
-  if (canMove(newX, newY, entity.size)) {
-    entity.x = newX;
-    entity.y = newY;
-    entity.stuckTimer = 0;
-    entity.moving = true;
-    return true;
-  } else {
-    if (!entity.stuckTimer) entity.stuckTimer = 0;
-    entity.stuckTimer++;
-    
-    if (entity.stuckTimer > 20) {
-      entity.stuckTimer = 0;
-      entity.moving = false;
-      return false;
-    }
-    
-    if (canMove(newX, entity.y, entity.size)) {
-      entity.x = newX;
-      entity.stuckTimer = 0;
-      entity.moving = true;
-      return true;
-    } else if (canMove(entity.x, newY, entity.size)) {
-      entity.y = newY;
-      entity.stuckTimer = 0;
-      entity.moving = true;
-      return true;
-    }
-    
-    entity.moving = false;
-    return false;
-  }
-}
-
-/* NPCs - VERSÃO CORRIGIDA */
-function spawnNPCs(count) {
-  const currentNPCs = npcs.filter(n => n.life > 0).length;
-  const availableSlots = MAX_NPCS - currentNPCs;
-  
-  if (availableSlots <= 0) return;
-  
-  const spawnCount = Math.min(count, availableSlots);
-  
-  for (let i = 0; i < spawnCount; i++) {
-    const pos = getRandomFreePosition(30);
-    const hasPower = Math.random() < NPC_POWER_CHANCE;
-    
-    const npc = {
-      x: pos.x,
-      y: pos.y,
-      size: 30,
-      drawWidth: 136,
-      drawHeight: 160,
-      speed: hasPower ? 0.8 : 1.2,
-      life: 100,
-      maxLife: 100,
-      hasPower: hasPower,
-      targetEnemy: null,
-      attackCooldown: 0,
-      fleeCooldown: 0,
-      stuckTimer: 0,
-      
-      // Propriedades de animação
-      lastDirection: 'down',
-      moving: false,
-      isAttacking: false,
-      currentFrame: 0,
-      animationTimer: 0,
-      
-      // Projéteis mágicos para NPCs com poder
-      magicCooldown: 0,
-      
-      findNearestEnemy: function() {
-        let nearest = null;
-        let minDist = Infinity;
-        
-        // Priorizar boss
-        if (boss) {
-          const dx = boss.x - this.x;
-          const dy = boss.y - this.y;
-          const d = Math.hypot(dx, dy);
-          if (d < minDist && d < 300) {
-            minDist = d;
-            nearest = boss;
-          }
-        }
-        
-        enemies.forEach(e => {
-          if (e.life <= 0) return;
-          const dx = e.x - this.x;
-          const dy = e.y - this.y;
-          const d = Math.hypot(dx, dy);
-          if (d < minDist && d < 300) {
-            minDist = d;
-            nearest = e;
-          }
-        });
-        
-        return nearest;
-      },
-      
-      // Novo: Atacar com magia se tiver poder
-      magicAttack: function(enemy) {
-        if (this.magicCooldown <= 0 && enemy) {
-          this.isAttacking = true;
-          this.magicCooldown = 90; // Cooldown maior para NPCs
-          
-          // Criar projétil mágico
-          const dx = enemy.x - this.x;
-          const dy = enemy.y - this.y;
-          const distance = Math.hypot(dx, dy) || 1;
-          
-          npcMagicProjectiles.push({
-            x: this.x + this.size/2,
-            y: this.y + this.size/2,
-            targetX: enemy.x,
-            targetY: enemy.y,
-            vx: (dx / distance) * 3,
-            vy: (dy / distance) * 3,
-            radius: 8,
-            damage: 100, // Dano reduzido para NPCs
-            owner: 'npc'
-          });
-        }
-      }
-    };
-    
-    npcs.push(npc);
-  }
-}
-
-// Função para atualizar projéteis mágicos de NPCs
-function updateNPCMagicProjectiles() {
-  for (let i = npcMagicProjectiles.length - 1; i >= 0; i--) {
-    const proj = npcMagicProjectiles[i];
-    
-    proj.x += proj.vx;
-    proj.y += proj.vy;
-    
-    const dx = proj.targetX - proj.x;
-    const dy = proj.targetY - proj.y;
-    const distanceToTarget = Math.hypot(dx, dy);
-    
-    // Explodir quando atingir o alvo ou chegar perto
-    if (distanceToTarget < 30) {
-      const explosionRadius = 40;
-      
-      // Dano ao boss
-      if (boss && Math.hypot(boss.x - proj.x, boss.y - proj.y) < explosionRadius + boss.size/2) {
-        boss.life -= proj.damage;
-      }
-      
-      // Dano aos inimigos
-      enemies.forEach(e => {
-        if (e.life <= 0) return;
-        
-        const distToExplosion = Math.hypot(e.x - proj.x, e.y - proj.y);
-        if (distToExplosion < explosionRadius) {
-          e.life -= proj.damage;
-          
-          if (e.life <= 0 && e.wasAlive) {
-            enemiesKilled++;
-            dropLoot(e.x, e.y);
-            e.wasAlive = false;
-            e.targetedBy = null;
-          }
-        }
-      });
-      
-      npcMagicProjectiles.splice(i, 1);
-      continue;
-    }
-    
-    // Remover se sair do mapa
-    if (proj.x < 0 || proj.x > worldW || proj.y < 0 || proj.y > worldH) {
-      npcMagicProjectiles.splice(i, 1);
-    }
-  }
-}
-
-/* ATUALIZAÇÃO DA ESPADA */
+// ========== ATUALIZAÇÃO DA ESPADA ==========
 function updateSword() {
   if (!sword.active) {
     sword.x = player.x + Math.cos(sword.angle) * sword.orbitRadius;
@@ -1203,6 +1282,7 @@ function updateSword() {
         enemiesKilled++;
         sword.targetEnemy.wasAlive = false;
         dropLoot(sword.targetEnemy.x, sword.targetEnemy.y);
+        addLog(`Espada eliminou inimigo!`);
       }
       
       sword.hitCooldown = 8;
@@ -1251,301 +1331,30 @@ function addSwordTrail() {
   sword.trail = sword.trail.filter(p => p.life > 0);
 }
 
-/* FUNÇÕES PARA SOLDADOS */
-function createAttackSoldier(spawnX, spawnY) {
-  soldierIdCounter++;
-  const soldierId = soldierIdCounter;
-  
-  const soldier = {
-    x: spawnX,
-    y: spawnY,
-    size: 30,
-    drawWidth: 136,
-    drawHeight: 160,
-    speed: 1.5,
-    life: 300,
-    maxLife: 300,
-    stuckTimer: 0,
-    attackCooldown: 0,
-    hitCooldown: 0,
-    id: soldierId,
-    targetEnemy: null,
-    isEngaged: false,
-    type: 'attack',
-    
-    // Propriedades de animação
-    lastDirection: 'down',
-    moving: false,
-    isAttacking: false,
-    currentFrame: 0,
-    animationTimer: 0,
-    
-    findUnassignedEnemy: function() {
-      let bestEnemy = null;
-      let minDist = Infinity;
-      let minSoldiersOnSameEnemy = Infinity;
-      
-      // Priorizar boss
-      if (boss) {
-        const dx = boss.x - this.x;
-        const dy = boss.y - this.y;
-        const distance = Math.hypot(dx, dy);
-        if (distance < 300) {
-          return boss;
-        }
-      }
-      
-      enemies.forEach(e => {
-        if(e.life <= 0) return;
-        
-        const dx = e.x - this.x;
-        const dy = e.y - this.y;
-        const distance = Math.hypot(dx, dy);
-        
-        if (distance < 300) {
-          let soldiersOnThisEnemy = 0;
-          soldiers.forEach(s => {
-            if (s !== this && s.targetEnemy === e) {
-              soldiersOnThisEnemy++;
-            }
-          });
-          
-          if (soldiersOnThisEnemy < minSoldiersOnSameEnemy || 
-              (soldiersOnThisEnemy === minSoldiersOnSameEnemy && distance < minDist)) {
-            bestEnemy = e;
-            minDist = distance;
-            minSoldiersOnSameEnemy = soldiersOnThisEnemy;
-          }
-        }
-      });
-      
-      if (bestEnemy) {
-        this.targetEnemy = bestEnemy;
-        this.isEngaged = true;
-        if (bestEnemy !== boss) {
-          bestEnemy.targetedBy = this.id;
-        }
-      }
-      
-      return bestEnemy;
-    },
-    
-    attack: function(enemy) {
-      if (this.attackCooldown <= 0) {
-        this.isAttacking = true;
-        this.attackCooldown = 40;
-        enemy.life -= SOLDIER_DAMAGE;
-        
-        if (enemy.life <= 0 && enemy.wasAlive && enemy !== boss) {
-          enemiesKilled++;
-          dropLoot(enemy.x, enemy.y);
-          enemy.wasAlive = false;
-          enemy.targetedBy = null;
-          this.targetEnemy = null;
-          this.isEngaged = false;
-        }
-      }
-    },
-    
-    releaseTarget: function() {
-      if (this.targetEnemy && this.targetEnemy.targetedBy === this.id) {
-        this.targetEnemy.targetedBy = null;
-      }
-      this.targetEnemy = null;
-      this.isEngaged = false;
-    }
-  };
-  
-  return soldier;
-}
-
-function createMageSoldier(spawnX, spawnY) {
-  soldierIdCounter++;
-  const soldierId = soldierIdCounter;
-  
-  const mage = {
-    x: spawnX,
-    y: spawnY,
-    size: 30,
-    drawWidth: 136,
-    drawHeight: 160,
-    speed: 1.5,
-    life: 300,
-    maxLife: 300,
-    stuckTimer: 0,
-    attackCooldown: 0,
-    hitCooldown: 0,
-    id: soldierId,
-    targetEnemy: null,
-    isEngaged: false,
-    type: 'mage',
-    
-    // Propriedades de animação
-    lastDirection: 'down',
-    moving: false,
-    isAttacking: false,
-    currentFrame: 0,
-    animationTimer: 0,
-    
-    findUnassignedEnemy: function() {
-      let bestEnemy = null;
-      let minDist = Infinity;
-      let minSoldiersOnSameEnemy = Infinity;
-      
-      // Priorizar boss
-      if (boss) {
-        const dx = boss.x - this.x;
-        const dy = boss.y - this.y;
-        const distance = Math.hypot(dx, dy);
-        if (distance < 400) {
-          return boss;
-        }
-      }
-      
-      enemies.forEach(e => {
-        if(e.life <= 0) return;
-        
-        const dx = e.x - this.x;
-        const dy = e.y - this.y;
-        const distance = Math.hypot(dx, dy);
-        
-        if (distance < 400) {
-          let soldiersOnThisEnemy = 0;
-          soldiers.forEach(s => {
-            if (s !== this && s.targetEnemy === e) {
-              soldiersOnThisEnemy++;
-            }
-          });
-          
-          if (soldiersOnThisEnemy < minSoldiersOnSameEnemy || 
-              (soldiersOnThisEnemy === minSoldiersOnSameEnemy && distance < minDist)) {
-            bestEnemy = e;
-            minDist = distance;
-            minSoldiersOnSameEnemy = soldiersOnThisEnemy;
-          }
-        }
-      });
-      
-      if (bestEnemy) {
-        this.targetEnemy = bestEnemy;
-        this.isEngaged = true;
-        if (bestEnemy !== boss) {
-          bestEnemy.targetedBy = this.id;
-        }
-      }
-      
-      return bestEnemy;
-    },
-    
-    attack: function(enemy) {
-      if (this.attackCooldown <= 0) {
-        this.isAttacking = true;
-        this.attackCooldown = 60;
-        const dx = enemy.x - this.x;
-        const dy = enemy.y - this.y;
-        const distance = Math.hypot(dx, dy) || 1;
-        
-        magicProjectiles.push({
-          x: this.x + this.size/2,
-          y: this.y + this.size/2,
-          targetX: enemy.x,
-          targetY: enemy.y,
-          vx: (dx / distance) * 4,
-          vy: (dy / distance) * 4,
-          radius: 10,
-          damage: MAGE_DAMAGE,
-          owner: this.id
-        });
-      }
-    },
-    
-    releaseTarget: function() {
-      if (this.targetEnemy && this.targetEnemy.targetedBy === this.id) {
-        this.targetEnemy.targetedBy = null;
-      }
-      this.targetEnemy = null;
-      this.isEngaged = false;
-    }
-  };
-  
-  return mage;
-}
-
-/* ATUALIZAÇÃO DOS PROJÉTEIS MÁGICOS DE SOLDADOS */
-function updateMagicProjectiles() {
-  for (let i = magicProjectiles.length - 1; i >= 0; i--) {
-    const proj = magicProjectiles[i];
-    
-    proj.x += proj.vx;
-    proj.y += proj.vy;
-    
-    const dx = proj.targetX - proj.x;
-    const dy = proj.targetY - proj.y;
-    const distanceToTarget = Math.hypot(dx, dy);
-    
-    if (distanceToTarget < 20) {
-      const explosionRadius = 60;
-      
-      // Dano ao boss
-      if (boss && Math.hypot(boss.x - proj.x, boss.y - proj.y) < explosionRadius + boss.size/2) {
-        boss.life -= proj.damage;
-      }
-      
-      enemies.forEach(e => {
-        if (e.life <= 0) return;
-        
-        const distToExplosion = Math.hypot(e.x - proj.x, e.y - proj.y);
-        if (distToExplosion < explosionRadius) {
-          e.life -= proj.damage;
-          
-          if (e.life <= 0 && e.wasAlive) {
-            enemiesKilled++;
-            dropLoot(e.x, e.y);
-            e.wasAlive = false;
-            e.targetedBy = null;
-          }
-        }
-      });
-      
-      magicProjectiles.splice(i, 1);
-      continue;
-    }
-    
-    if (proj.x < 0 || proj.x > worldW || proj.y < 0 || proj.y > worldH) {
-      magicProjectiles.splice(i, 1);
-    }
-  }
-}
-
-/* SISTEMA DE INVOCAÇÕES EM MASSA - VERSÃO CORRIGIDA */
+// ========== SISTEMA DE INVOCAÇÕES EM MASSA ==========
 function toggleMassSummon() {
   if (!soldiersSummoned) {
     const currentSoldiers = soldiers.length;
     if (currentSoldiers >= MAX_SOLDIERS) {
-      console.log(`Limite máximo de ${MAX_SOLDIERS} soldados atingido!`);
+      addLog(`Limite máximo de ${MAX_SOLDIERS} soldados atingido!`);
       return;
     }
     
     const totalSouls = inventory.attackSouls + inventory.mageSouls;
     if (totalSouls <= 0) {
-      console.log("Sem almas para invocar!");
+      addLog("Sem almas para invocar!");
       return;
     }
     
     const availableSlots = MAX_SOLDIERS - currentSoldiers;
-    
-    // Calcular quantos magos podemos invocar (garantir pelo menos 3)
     const mageSoulsAvailable = inventory.mageSouls;
     const magesToSummon = Math.min(3, mageSoulsAvailable, availableSlots);
-    
-    // Calcular quantos soldados de ataque podemos invocar
     const remainingSlots = availableSlots - magesToSummon;
     const attackToSummon = Math.min(inventory.attackSouls, remainingSlots);
-    
     const soulsToSummon = magesToSummon + attackToSummon;
     
     if (soulsToSummon <= 0) {
-      console.log("Sem almas suficientes para invocar!");
+      addLog("Sem almas suficientes para invocar!");
       return;
     }
     
@@ -1606,7 +1415,7 @@ function toggleMassSummon() {
     inventory.mageSouls -= mageSummoned;
     
     soldiersSummoned = true;
-    console.log(`${attackSummoned} soldados de ataque e ${mageSummoned} magos invocados! Total: ${soldiers.length}/${MAX_SOLDIERS}`);
+    addLog(`${attackSummoned} soldados e ${mageSummoned} magos invocados!`);
     
     document.getElementById('summon').textContent = '❌';
     document.getElementById('summon').title = 'Despawnar todas as invocações';
@@ -1616,11 +1425,8 @@ function toggleMassSummon() {
     let mageCount = 0;
     
     soldiers.forEach(s => {
-      if (s.type === 'attack') {
-        attackCount++;
-      } else if (s.type === 'mage') {
-        mageCount++;
-      }
+      if (s.type === 'attack') attackCount++;
+      else if (s.type === 'mage') mageCount++;
     });
     
     inventory.attackSouls += attackCount;
@@ -1630,7 +1436,7 @@ function toggleMassSummon() {
     magicProjectiles.length = 0;
     
     soldiersSummoned = false;
-    console.log(`${attackCount} soldados de ataque e ${mageCount} magos despawnados. Almas devolvidas.`);
+    addLog(`${attackCount} soldados e ${mageCount} magos despawnados`);
     
     document.getElementById('summon').textContent = '👥';
     document.getElementById('summon').title = 'Invocar todas as invocações';
@@ -1640,15 +1446,104 @@ function toggleMassSummon() {
   updateSummonButton();
 }
 
-/* FUNÇÕES DE ATUALIZAÇÃO */
+// ========== ATUALIZAÇÃO DOS PROJÉTEIS ==========
+function updateMagicProjectiles() {
+  for (let i = magicProjectiles.length - 1; i >= 0; i--) {
+    const proj = magicProjectiles[i];
+    
+    proj.x += proj.vx;
+    proj.y += proj.vy;
+    
+    const dx = proj.targetX - proj.x;
+    const dy = proj.targetY - proj.y;
+    const distanceToTarget = Math.hypot(dx, dy);
+    
+    if (distanceToTarget < 20) {
+      const explosionRadius = 60;
+      
+      if (boss && Math.hypot(boss.x - proj.x, boss.y - proj.y) < explosionRadius + boss.size/2) {
+        boss.life -= proj.damage;
+        addLog(`Mago acertou o BOSS!`);
+      }
+      
+      enemies.forEach(e => {
+        if (e.life <= 0) return;
+        
+        const distToExplosion = Math.hypot(e.x - proj.x, e.y - proj.y);
+        if (distToExplosion < explosionRadius) {
+          e.life -= proj.damage;
+          
+          if (e.life <= 0 && e.wasAlive) {
+            enemiesKilled++;
+            dropLoot(e.x, e.y);
+            e.wasAlive = false;
+            e.targetedBy = null;
+            addLog(`Mago eliminou inimigo!`);
+          }
+        }
+      });
+      
+      magicProjectiles.splice(i, 1);
+      continue;
+    }
+    
+    if (proj.x < 0 || proj.x > worldW || proj.y < 0 || proj.y > worldH) {
+      magicProjectiles.splice(i, 1);
+    }
+  }
+}
+
+function updateNPCMagicProjectiles() {
+  for (let i = npcMagicProjectiles.length - 1; i >= 0; i--) {
+    const proj = npcMagicProjectiles[i];
+    
+    proj.x += proj.vx;
+    proj.y += proj.vy;
+    
+    const dx = proj.targetX - proj.x;
+    const dy = proj.targetY - proj.y;
+    const distanceToTarget = Math.hypot(dx, dy);
+    
+    if (distanceToTarget < 30) {
+      const explosionRadius = 40;
+      
+      if (boss && Math.hypot(boss.x - proj.x, boss.y - proj.y) < explosionRadius + boss.size/2) {
+        boss.life -= proj.damage;
+      }
+      
+      enemies.forEach(e => {
+        if (e.life <= 0) return;
+        
+        const distToExplosion = Math.hypot(e.x - proj.x, e.y - proj.y);
+        if (distToExplosion < explosionRadius) {
+          e.life -= proj.damage;
+          
+          if (e.life <= 0 && e.wasAlive) {
+            enemiesKilled++;
+            dropLoot(e.x, e.y);
+            e.wasAlive = false;
+            e.targetedBy = null;
+          }
+        }
+      });
+      
+      npcMagicProjectiles.splice(i, 1);
+      continue;
+    }
+    
+    if (proj.x < 0 || proj.x > worldW || proj.y < 0 || proj.y > worldH) {
+      npcMagicProjectiles.splice(i, 1);
+    }
+  }
+}
+
+// ========== FUNÇÕES DE ATUALIZAÇÃO ==========
 function checkAutoHerbUse() {
   const playerNeedsHeal = player.life <= player.maxLife * 0.5;
   
   let soldierNeedsHeal = false;
   soldiers.forEach(s => {
-    if (s.life <= s.maxLife * 0.5) {
-      soldierNeedsHeal = true;
-    }
+    if (s.life <= s.maxLife * 0.5) soldierNeedsHeal = true;
   });
   
   if ((playerNeedsHeal || soldierNeedsHeal) && inventory.herbs > 0) {
@@ -1657,50 +1552,23 @@ function checkAutoHerbUse() {
 }
 
 function checkAutoCollection() {
-  lootItems.forEach((item, index) => {
-    if (item.collected) return;
+  for (let i = lootItems.length - 1; i >= 0; i--) {
+    const item = lootItems[i];
+    if (item.collected) continue;
     
     const dx = item.x - player.x;
     const dy = item.y - player.y;
     const d = Math.hypot(dx, dy);
     
     if (d < 25) {
-      collectItemAuto(item, index);
-      return;
+      collectItemAuto(item, i);
+      break;
     }
-  });
-  
-  soldiers.forEach(soldier => {
-    lootItems.forEach((item, index) => {
-      if (item.collected) return;
-      
-      const dx = item.x - soldier.x;
-      const dy = item.y - soldier.y;
-      const d = Math.hypot(dx, dy);
-      
-      if (d < 25) {
-        collectItemAuto(item, index);
-        return;
-      }
-    });
-  });
+  }
 }
 
 function collectItemAuto(item, index) {
-  if (item.type === 'herb') {
-    inventory.herbs++;
-  } else if (item.type === 'bullets') {
-    inventory.bullets += item.quantity;
-  } else if (item.type === 'attackSoul') {
-    inventory.attackSouls++;
-  } else if (item.type === 'mageSoul') {
-    inventory.mageSouls++;
-  }
-  
-  lootItems.splice(index, 1);
-  updateInventoryUI();
-  updateGameUI();
-  updateSummonButton();
+  collectItemByEntity(item, index, 'Player');
 }
 
 function updateSummonButton() {
@@ -1714,9 +1582,11 @@ function updateSummonButton() {
   }
 }
 
-/* INVENTÁRIO */
+// ========== INVENTÁRIO ==========
 function updateInventoryUI() {
   const inventoryContent = document.getElementById('inventoryContent');
+  if (!inventoryContent) return;
+  
   inventoryContent.innerHTML = '';
   
   if (inventory.herbs > 0) {
@@ -1806,6 +1676,7 @@ function useItem(itemType) {
     updateInventoryUI();
     updateGameUI();
     closeInventory();
+    addLog(`Usou erva! Cura: +${healAmount}HP`);
   }
 }
 
@@ -1820,6 +1691,7 @@ function dropItem(itemType) {
       size: 20
     });
     inventory.herbs--;
+    addLog("Dropou erva no chão");
   } else if (itemType === 'bullets' && inventory.bullets >= 10) {
     lootItems.push({
       x: player.x,
@@ -1831,6 +1703,7 @@ function dropItem(itemType) {
       size: 20
     });
     inventory.bullets -= 10;
+    addLog("Dropou 10 balas no chão");
   }
   
   updateInventoryUI();
@@ -1850,7 +1723,7 @@ function closeInventory() {
 document.getElementById('openInventory').addEventListener('click', openInventory);
 document.getElementById('closeInventory').addEventListener('click', closeInventory);
 
-/* GAME OVER */
+// ========== GAME OVER ==========
 function gameOver(){
   gameRunning = false;
   setTimeout(() => {
@@ -1859,11 +1732,11 @@ function gameOver(){
   }, 100);
 }
 
-/* CAMERA */
+// ========== CAMERA ==========
 const camera = {x: 0, y: 0};
 let lastTime = 0;
 
-/* INTERFACE DO JOGO */
+// ========== INTERFACE DO JOGO ==========
 const statusBtn = document.getElementById('statusBtn');
 const statusPanel = document.getElementById('statusPanel');
 const lifeValue = document.getElementById('lifeValue');
@@ -1877,7 +1750,7 @@ const enemiesAlive = document.getElementById('enemiesAlive');
 const npcsAliveElement = document.getElementById('npcsAlive');
 const spawnTimer = document.getElementById('spawnTimer');
 
-statusBtn.addEventListener('click', function() {
+if (statusBtn) statusBtn.addEventListener('click', function() {
   statusPanel.classList.toggle('show');
 });
 
@@ -1888,46 +1761,44 @@ function updateGameUI() {
   const timeToSpawn = Math.max(0, Math.floor((ENEMY_SPAWN_INTERVAL - enemySpawnTimer)/1000));
   const totalSouls = inventory.attackSouls + inventory.mageSouls;
   
-  lifeValue.textContent = Math.max(player.life, 0);
-  ammoValue.textContent = inventory.bullets;
-  soulsValue.textContent = totalSouls;
-  killedCount.textContent = enemiesKilled;
-  herbsCount.textContent = inventory.herbs;
-  bulletsCount.textContent = inventory.bullets;
-  soldiersCount.textContent = aliveSoldiers;
-  enemiesAlive.textContent = `${aliveEnemies}/200`;
-  npcsAliveElement.textContent = `${aliveNPCs}/10`;
-  spawnTimer.textContent = timeToSpawn;
+  if (lifeValue) lifeValue.textContent = Math.max(player.life, 0);
+  if (ammoValue) ammoValue.textContent = inventory.bullets;
+  if (soulsValue) soulsValue.textContent = totalSouls;
+  if (killedCount) killedCount.textContent = enemiesKilled;
+  if (herbsCount) herbsCount.textContent = inventory.herbs;
+  if (bulletsCount) bulletsCount.textContent = inventory.bullets;
+  if (soldiersCount) soldiersCount.textContent = aliveSoldiers;
+  if (enemiesAlive) enemiesAlive.textContent = `${aliveEnemies}/200`;
+  if (npcsAliveElement) npcsAliveElement.textContent = `${aliveNPCs}/10`;
+  if (spawnTimer) spawnTimer.textContent = timeToSpawn;
   
   const lifeDisplay = document.querySelector('.life-display');
   const ammoDisplay = document.querySelector('.ammo-display');
   const soulsDisplay = document.querySelector('.souls-display');
   
-  if (player.life < 30) {
-    lifeDisplay.classList.add('low');
-  } else {
-    lifeDisplay.classList.remove('low');
+  if (lifeDisplay) {
+    if (player.life < 30) lifeDisplay.classList.add('low');
+    else lifeDisplay.classList.remove('low');
   }
   
-  if (inventory.bullets < 20) {
-    ammoDisplay.classList.add('low');
-  } else {
-    ammoDisplay.classList.remove('low');
+  if (ammoDisplay) {
+    if (inventory.bullets < 20) ammoDisplay.classList.add('low');
+    else ammoDisplay.classList.remove('low');
   }
   
-  if (totalSouls > 0) {
-    soulsDisplay.classList.add('active');
-  } else {
-    soulsDisplay.classList.remove('active');
+  if (soulsDisplay) {
+    if (totalSouls > 0) soulsDisplay.classList.add('active');
+    else soulsDisplay.classList.remove('active');
   }
   
   const swordBtn = document.getElementById('sword');
-  const modeText = sword.active ? 
-    (sword.attackMode === 'pursuit' ? 'PERSEGUINDO INIMIGOS' : 'ÓRBITA') : 
-    'DESATIVADA';
-  swordBtn.title = `Espada: ${modeText}`;
+  if (swordBtn) {
+    const modeText = sword.active ? 
+      (sword.attackMode === 'pursuit' ? 'PERSEGUINDO INIMIGOS' : 'ÓRBITA') : 
+      'DESATIVADA';
+    swordBtn.title = `Espada: ${modeText}`;
+  }
   
-  // Atualizar status do boss
   if (boss) {
     document.getElementById('bossHealth').textContent = `${boss.life}/${boss.maxLife}`;
   } else {
@@ -1935,42 +1806,31 @@ function updateGameUI() {
   }
 }
 
-/* FUNÇÃO DE ATUALIZAÇÃO DO BOSS */
+// ========== ATUALIZAÇÃO DO BOSS ==========
 function updateBoss() {
   if (!boss) return;
   
-  // Movimentação do boss
   const target = boss.findTarget();
   const moved = moveIntelligently(boss, target.x, target.y);
-  
-  // Atualizar estado de movimento para animação
   boss.moving = moved;
-  
-  // Atualizar animação do boss
   enemyAnimationManager.updateAnimation(boss);
   
-  // Ataque de fogo
   if (boss.attackCooldown <= 0) {
     boss.fireAttack();
   } else {
     boss.attackCooldown--;
-    // Resetar animação de ataque após o tempo
     if (boss.attackAnimationTimer > 0) {
       boss.attackAnimationTimer--;
-      if (boss.attackAnimationTimer <= 0) {
-        boss.isAttacking = false;
-      }
+      if (boss.attackAnimationTimer <= 0) boss.isAttacking = false;
     }
   }
   
-  // Atualizar fireballs
   for (let i = bossFireballs.length - 1; i >= 0; i--) {
     const fb = bossFireballs[i];
     fb.x += fb.vx;
     fb.y += fb.vy;
     fb.life--;
     
-    // Colisão com player
     const dx = player.x + player.size/2 - fb.x;
     const dy = player.y + player.size/2 - fb.y;
     const distance = Math.hypot(dx, dy);
@@ -1982,7 +1842,6 @@ function updateBoss() {
       continue;
     }
     
-    // Colisão com soldados
     soldiers.forEach(s => {
       if (s.life <= 0) return;
       const dx2 = s.x + s.size/2 - fb.x;
@@ -1995,15 +1854,12 @@ function updateBoss() {
       }
     });
     
-    // Remover fireballs antigas
     if (fb.life <= 0 || fb.x < 0 || fb.x > worldW || fb.y < 0 || fb.y > worldH) {
       bossFireballs.splice(i, 1);
     }
   }
   
-  // Verificar se boss morreu
   if (boss.life <= 0) {
-    // Dropar loot especial
     for (let i = 0; i < 10; i++) {
       dropLoot(boss.x + Math.random() * 100 - 50, boss.y + Math.random() * 100 - 50);
     }
@@ -2013,20 +1869,17 @@ function updateBoss() {
     document.getElementById('bossSpawn').title = 'BOSS: MORTO (Clique para spawnar)';
     document.getElementById('bossStatus').textContent = 'MORTO';
     document.getElementById('bossStatus').style.color = '#ff0000';
+    addLog("BOSS DERROTADO! Loot especial dropado!");
   }
 }
 
-/* FUNÇÃO DE DESENHO DO BOSS - VERSÃO CORRIGIDA (SEM BOLA LILÁS) */
 function drawBoss() {
   if (!boss) return;
   
-  // Atualizar coordenadas do sprite do boss
   const spriteCoords = enemyAnimationManager.getSpriteCoordinates(boss);
-  
   const drawX = boss.x - camera.x - (boss.drawWidth - boss.size)/2;
   const drawY = boss.y - camera.y - (boss.drawHeight - boss.size)/2;
   
-  // Usar sprite do boss
   if (bossImageLoaded) {
     ctx.drawImage(
       bossSprite,
@@ -2036,29 +1889,24 @@ function drawBoss() {
       boss.drawWidth, boss.drawHeight
     );
   } else {
-    // Fallback se a imagem não carregar
     ctx.fillStyle = '#8b5cf6';
     ctx.beginPath();
     ctx.arc(boss.x - camera.x + boss.size/2, boss.y - camera.y + boss.size/2, boss.size, 0, Math.PI * 2);
     ctx.fill();
   }
   
-  // Barra de vida lilás
   ctx.fillStyle = "black";
   ctx.fillRect(boss.x - camera.x, boss.y - camera.y - 20, boss.size, 8);
   ctx.fillStyle = "#8b5cf6";
   ctx.fillRect(boss.x - camera.x, boss.y - camera.y - 20, (boss.life/boss.maxLife) * boss.size, 8);
   
-  // Apenas o contorno normal (sem brilho)
   ctx.strokeStyle = '#8b5cf6';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(boss.x - camera.x + boss.size/2, boss.y - camera.y + boss.size/2, boss.size/2, 0, Math.PI * 2);
   ctx.stroke();
   
-  // Desenhar fireballs
   bossFireballs.forEach(fb => {
-    // Efeito de fogo
     const gradient = ctx.createRadialGradient(
       fb.x - camera.x, fb.y - camera.y, 0,
       fb.x - camera.x, fb.y - camera.y, fb.radius
@@ -2072,7 +1920,6 @@ function drawBoss() {
     ctx.arc(fb.x - camera.x, fb.y - camera.y, fb.radius, 0, Math.PI * 2);
     ctx.fill();
     
-    // Rastro de fogo
     ctx.fillStyle = 'rgba(255, 100, 0, 0.3)';
     ctx.beginPath();
     ctx.arc(fb.x - camera.x, fb.y - camera.y, fb.radius * 0.7, 0, Math.PI * 2);
@@ -2080,14 +1927,13 @@ function drawBoss() {
   });
 }
 
-/* LOOP PRINCIPAL DO JOGO - VERSÃO CORRIGIDA */
+// ========== LOOP PRINCIPAL DO JOGO ==========
 function update(currentTime = 0){
   if(!gameRunning) return;
   
   const deltaTime = currentTime - lastTime;
   lastTime = currentTime;
   
-  // Atualizar direção do player
   player.updateDirection();
   
   if (enemySpawnEnabled) {
@@ -2103,9 +1949,7 @@ function update(currentTime = 0){
     if(npcSpawnTimer >= NPC_SPAWN_INTERVAL){
       const currentNPCs = npcs.filter(n => n.life > 0).length;
       const neededNPCs = MAX_NPCS - currentNPCs;
-      if (neededNPCs > 0) {
-        spawnNPCs(Math.min(NPC_SPAWN_COUNT, neededNPCs));
-      }
+      if (neededNPCs > 0) spawnNPCs(Math.min(NPC_SPAWN_COUNT, neededNPCs));
       npcSpawnTimer = 0;
     }
   }
@@ -2113,75 +1957,102 @@ function update(currentTime = 0){
   // Movimento do player
   const nx = player.x + player.vx;
   const ny = player.y + player.vy;
-  
   if(canMove(nx, player.y, player.size)) player.x = nx;
   if(canMove(player.x, ny, player.size)) player.y = ny;
   
-  // Atualizar cooldown de ataque
-  if (player.attackCooldown > 0) {
-    player.attackCooldown--;
-  }
-  
-  // Atualizar animação do player
+  if (player.attackCooldown > 0) player.attackCooldown--;
   animationManager.updateAnimation(player);
   
-  // Atualizar inimigos
+  // ========== ATUALIZAÇÃO DOS INIMIGOS ==========
   enemies.forEach(e => {
     if(e.life <= 0) return;
     
     const target = e.findNearestTarget();
     const moved = moveIntelligently(e, target.x, target.y);
-    
-    // Atualizar estado de movimento para animação
     e.moving = moved;
     
     const dx = target.x - e.x;
     const dy = target.y - e.y;
     const distance = Math.hypot(dx, dy);
     
-    // Atualizar direção para animação
-    if (Math.abs(dx) > Math.abs(dy)) {
-      e.lastDirection = dx > 0 ? 'right' : 'left';
-    } else {
-      e.lastDirection = dy > 0 ? 'down' : 'up';
-    }
+    if(Math.abs(dx) > Math.abs(dy)) e.lastDirection = dx > 0 ? 'right' : 'left';
+    else e.lastDirection = dy > 0 ? 'down' : 'up';
     
     if(distance < 20 && e.attackCooldown <= 0){
       target.life -= ENEMY_DAMAGE;
       e.attackCooldown = 40;
       e.isAttacking = true;
-      e.attackAnimationTimer = 15; // Tempo da animação de ataque
+      e.attackAnimationTimer = 15;
       
-      if(target === player && player.life <= 0) {
-        gameOver();
-      }
+      if(target === player && player.life <= 0) gameOver();
     }
     
     if (e.attackCooldown > 0) e.attackCooldown--;
-    
-    // Resetar animação de ataque após o tempo
     if (e.attackAnimationTimer > 0) {
       e.attackAnimationTimer--;
-      if (e.attackAnimationTimer <= 0) {
-        e.isAttacking = false;
-      }
+      if (e.attackAnimationTimer <= 0) e.isAttacking = false;
     }
     
-    // Atualizar animação do inimigo
     enemyAnimationManager.updateAnimation(e);
   });
   
-  // Atualizar boss
   updateBoss();
   
-  // Atualizar soldados
+  // ========== ATUALIZAÇÃO DOS SOLDADOS (COM COLETA INTELIGENTE) ==========
+  const enemiesAlive = areEnemiesAlive();
+  const collectedIndexes = [];
+  
   soldiers.forEach((s, sIndex) => {
     if (s.life <= 0) {
       s.releaseTarget();
       soldiers.splice(sIndex, 1);
+      addLog("Soldado morreu!");
       return;
     }
     
+    // NOVO: Cooldown de coleta
+    if (s.collectionCooldown > 0) s.collectionCooldown--;
+    
+    // ========== COMPORTAMENTO DE COLETA QUANDO NÃO HÁ INIMIGOS ==========
+    if (!enemiesAlive && lootItems.length > 0 && s.collectionCooldown <= 0) {
+      // Encontrar item mais próximo que não está sendo coletado
+      const nearestItem = findNearestItem(s, collectedIndexes);
+      
+      if (nearestItem) {
+        const dx = nearestItem.item.x - s.x;
+        const dy = nearestItem.item.y - s.y;
+        const distance = Math.hypot(dx, dy);
+        
+        if (distance < 25) {
+          // Coletar item
+          collectItemByEntity(nearestItem.item, nearestItem.index, 
+            s.type === 'mage' ? 'Mago' : 'Soldado');
+          collectedIndexes.push(nearestItem.index);
+          s.collectionCooldown = 30;
+          s.moving = false;
+        } else {
+          // Mover em direção ao item
+          const moveX = s.x + (dx / distance) * s.speed;
+          const moveY = s.y + (dy / distance) * s.speed;
+          
+          if (canMove(moveX, s.y, s.size)) s.x = moveX;
+          if (canMove(s.x, moveY, s.size)) s.y = moveY;
+          
+          s.moving = true;
+          if (Math.abs(dx) > Math.abs(dy)) {
+            s.lastDirection = dx > 0 ? 'right' : 'left';
+          } else {
+            s.lastDirection = dy > 0 ? 'down' : 'up';
+          }
+        }
+        
+        // Pular comportamento de combate
+        animationManager.updateAnimation(s);
+        return;
+      }
+    }
+    
+    // ========== COMPORTAMENTO NORMAL DE COMBATE ==========
     if (s.targetEnemy && (s.targetEnemy.life <= 0 || (s.targetEnemy !== boss && s.targetEnemy.targetedBy !== s.id))) {
       s.releaseTarget();
     }
@@ -2205,65 +2076,93 @@ function update(currentTime = 0){
           }
         }
         
-        if (d < 120 && s.attackCooldown <= 0) {
-          s.attack(targetEnemy);
-        }
+        if (d < 120 && s.attackCooldown <= 0) s.attack(targetEnemy);
       } else {
         moveIntelligently(s, targetEnemy.x, targetEnemy.y);
         
         const dx = targetEnemy.x - s.x;
         const dy = targetEnemy.y - s.y;
         const d = Math.hypot(dx, dy);
-        if (d < 25 && s.attackCooldown <= 0) {
-          s.attack(targetEnemy);
-        }
+        if (d < 25 && s.attackCooldown <= 0) s.attack(targetEnemy);
       }
     } else {
       const dx = player.x - s.x;
       const dy = player.y - s.y;
       const d = Math.hypot(dx, dy) || 1;
       
-      if (d > 50) {
-        moveIntelligently(s, player.x, player.y);
-      } else {
-        s.moving = false;
-      }
+      if (d > 50) moveIntelligently(s, player.x, player.y);
+      else s.moving = false;
     }
     
     if (s.attackCooldown > 0) s.attackCooldown--;
     if (s.hitCooldown > 0) s.hitCooldown--;
     
-    // Resetar estado de ataque após cooldown
-    if (s.isAttacking && s.attackCooldown <= 30) {
-      s.isAttacking = false;
-    }
+    if (s.isAttacking && s.attackCooldown <= 30) s.isAttacking = false;
     
-    // Atualizar animação do soldado
     animationManager.updateAnimation(s);
   });
   
-  // ATUALIZAR NPCS COM COMPORTAMENTO MELHORADO
+  // ========== ATUALIZAÇÃO DOS NPCS (COM INTELIGÊNCIA DE CURA) ==========
   npcs.forEach((npc, index) => {
     if (npc.life <= 0) {
       npcs.splice(index, 1);
+      addLog("NPC morreu!");
       return;
     }
     
+    // NOVO: Atualizar cooldown de cura
+    if (npc.healCooldown > 0) npc.healCooldown--;
+    
+    // ========== COMPORTAMENTO DE BUSCA DE CURA ==========
+    if (npc.life <= npc.maxLife * NPC_HEAL_THRESHOLD && npc.healCooldown <= 0) {
+      const nearestHerb = npc.findNearestHerb();
+      
+      if (nearestHerb && nearestHerb.distance < 300) {
+        const dx = nearestHerb.item.x - npc.x;
+        const dy = nearestHerb.item.y - npc.y;
+        const distance = Math.hypot(dx, dy);
+        
+        if (distance < 25) {
+          // Coletar erva e se curar
+          lootItems.splice(nearestHerb.index, 1);
+          const healAmount = Math.floor(npc.maxLife * 0.5);
+          const oldLife = npc.life;
+          npc.life = Math.min(npc.maxLife, npc.life + healAmount);
+          npc.healCooldown = 180;
+          addLog(`NPC se curou! +${npc.life - oldLife}HP`);
+        } else {
+          // Mover em direção à erva
+          const moveX = npc.x + (dx / distance) * npc.speed * 1.2;
+          const moveY = npc.y + (dy / distance) * npc.speed * 1.2;
+          
+          if (canMove(moveX, npc.y, npc.size)) npc.x = moveX;
+          if (canMove(npc.x, moveY, npc.size)) npc.y = moveY;
+          
+          npc.moving = true;
+          if (Math.abs(dx) > Math.abs(dy)) {
+            npc.lastDirection = dx > 0 ? 'right' : 'left';
+          } else {
+            npc.lastDirection = dy > 0 ? 'down' : 'up';
+          }
+        }
+        
+        // Pular comportamento normal
+        animationManager.updateAnimation(npc);
+        return;
+      }
+    }
+    
+    // ========== COMPORTAMENTO NORMAL ==========
     const nearestEnemy = npc.findNearestEnemy();
     
     if (nearestEnemy) {
       if (npc.hasPower) {
-        // NPC com poder: ataca à distância
         const dx = nearestEnemy.x - npc.x;
         const dy = nearestEnemy.y - npc.y;
         const distance = Math.hypot(dx, dy);
         
-        // Se estiver dentro do alcance de ataque, ataca
-        if (distance < 150 && npc.magicCooldown <= 0) {
-          npc.magicAttack(nearestEnemy);
-        }
+        if (distance < 150 && npc.magicCooldown <= 0) npc.magicAttack(nearestEnemy);
         
-        // Movimento: mantém distância
         if (distance < 80) {
           const retreatX = npc.x - (dx / distance) * npc.speed;
           const retreatY = npc.y - (dy / distance) * npc.speed;
@@ -2271,13 +2170,11 @@ function update(currentTime = 0){
           if (canMove(npc.x, retreatY, npc.size)) npc.y = retreatY;
           npc.moving = true;
         } else if (distance > 120) {
-          // Aproxima-se se estiver muito longe
           moveIntelligently(npc, nearestEnemy.x, nearestEnemy.y);
         } else {
           npc.moving = false;
         }
       } else {
-        // NPC sem poder: foge
         if (npc.fleeCooldown <= 0) {
           const dx = nearestEnemy.x - npc.x;
           const dy = nearestEnemy.y - npc.y;
@@ -2297,16 +2194,11 @@ function update(currentTime = 0){
       npc.moving = false;
     }
     
-    // Atualizar cooldown de magia
     if (npc.magicCooldown > 0) {
       npc.magicCooldown--;
-      // Resetar animação de ataque após cooldown
-      if (npc.magicCooldown <= 30) {
-        npc.isAttacking = false;
-      }
+      if (npc.magicCooldown <= 30) npc.isAttacking = false;
     }
     
-    // Verificar colisão com inimigos
     enemies.forEach(e => {
       if (e.life <= 0) return;
       
@@ -2314,19 +2206,16 @@ function update(currentTime = 0){
       const dy = e.y - npc.y;
       const distance = Math.hypot(dx, dy);
       
-      if (distance < 20) {
-        npc.life -= ENEMY_DAMAGE;
-      }
+      if (distance < 20) npc.life -= ENEMY_DAMAGE;
     });
     
     if (npc.attackCooldown > 0) npc.attackCooldown--;
     if (npc.fleeCooldown > 0) npc.fleeCooldown--;
     
-    // Atualizar animação do NPC
     animationManager.updateAnimation(npc);
   });
   
-  // Atualizar tiros
+  // ========== ATUALIZAÇÃO DOS PROJÉTEIS ==========
   bullets.forEach((b, bi) => {
     b.x += b.vx;
     b.y += b.vy;
@@ -2336,7 +2225,6 @@ function update(currentTime = 0){
       return;
     }
     
-    // Colisão com boss
     if (boss) {
       const dx = boss.x + boss.size/2 - b.x;
       const dy = boss.y + boss.size/2 - b.y;
@@ -2357,6 +2245,7 @@ function update(currentTime = 0){
           enemiesKilled++;
           e.wasAlive = false;
           dropLoot(e.x, e.y);
+          addLog(`Inimigo eliminado! Dano: ${BULLET_DAMAGE}`);
         }
         
         bullets.splice(bi, 1);
@@ -2364,24 +2253,14 @@ function update(currentTime = 0){
     });
   });
   
-  // Atualizar projéteis mágicos de soldados
   updateMagicProjectiles();
-  
-  // Atualizar projéteis mágicos de NPCs
   updateNPCMagicProjectiles();
   
   if(player.hitCooldown > 0) player.hitCooldown--;
-  
-  // Verificar uso automático de erva
   checkAutoHerbUse();
-  
-  // Coleta automática de itens
   checkAutoCollection();
-  
-  // Atualizar espada
   updateSword();
   
-  // Atualizar câmera
   camera.x = player.x - canvas.width/2 + player.size/2;
   camera.y = player.y - canvas.height/2 + player.size/2;
   camera.x = Math.max(0, Math.min(camera.x, worldW - canvas.width));
@@ -2391,7 +2270,7 @@ function update(currentTime = 0){
   requestAnimationFrame(update);
 }
 
-/* FUNÇÃO DE DESENHO - VERSÃO CORRIGIDA */
+// ========== FUNÇÃO DE DESENHO ==========
 function draw(){
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
@@ -2413,15 +2292,10 @@ function draw(){
     if (item.sprite.complete && item.sprite.naturalHeight !== 0) {
       ctx.drawImage(item.sprite, drawX, drawY, item.size, item.size);
     } else {
-      if (item.type === 'herb') {
-        ctx.fillStyle = '#4CAF50';
-      } else if (item.type === 'bullets') {
-        ctx.fillStyle = '#2196F3';
-      } else if (item.type === 'attackSoul') {
-        ctx.fillStyle = '#4CAF50';
-      } else if (item.type === 'mageSoul') {
-        ctx.fillStyle = '#9C27B0';
-      }
+      if (item.type === 'herb') ctx.fillStyle = '#4CAF50';
+      else if (item.type === 'bullets') ctx.fillStyle = '#2196F3';
+      else if (item.type === 'attackSoul') ctx.fillStyle = '#4CAF50';
+      else if (item.type === 'mageSoul') ctx.fillStyle = '#9C27B0';
       ctx.fillRect(drawX, drawY, item.size, item.size);
       
       if (item.type === 'bullets') {
@@ -2432,21 +2306,13 @@ function draw(){
       }
     }
     
-    if (item.type === 'herb') {
-      ctx.strokeStyle = '#4CAF50';
-    } else if (item.type === 'bullets') {
-      ctx.strokeStyle = '#2196F3';
-    } else if (item.type === 'attackSoul') {
-      ctx.strokeStyle = '#4CAF50';
-    } else if (item.type === 'mageSoul') {
-      ctx.strokeStyle = '#9C27B0';
-      ctx.shadowColor = '#9C27B0';
-      ctx.shadowBlur = 10;
-    }
+    if (item.type === 'herb') ctx.strokeStyle = '#4CAF50';
+    else if (item.type === 'bullets') ctx.strokeStyle = '#2196F3';
+    else if (item.type === 'attackSoul') ctx.strokeStyle = '#4CAF50';
+    else if (item.type === 'mageSoul') ctx.strokeStyle = '#9C27B0';
     
     ctx.lineWidth = 2;
     ctx.strokeRect(drawX - 2, drawY - 2, item.size + 4, item.size + 4);
-    ctx.shadowBlur = 0;
   });
   
   // Desenhar NPCs
@@ -2454,7 +2320,6 @@ function draw(){
     if (npc.life <= 0) return;
     
     const spriteCoords = animationManager.getSpriteCoordinates(npc);
-    
     const drawX = npc.x - camera.x - (npc.drawWidth - npc.size)/2;
     const drawY = npc.y - camera.y - (npc.drawHeight - npc.size)/2;
     
@@ -2471,12 +2336,10 @@ function draw(){
       ctx.fillRect(npc.x - camera.x, npc.y - camera.y, npc.size, npc.size);
     }
     
-    // Barra de vida
     ctx.fillStyle = "black";
     ctx.fillRect(npc.x - camera.x, npc.y - camera.y - 8, npc.size, 4);
     
     if (npc.hasPower) {
-      // NPC com poder tem barra de vida amarela
       ctx.fillStyle = "yellow";
       ctx.fillRect(npc.x - camera.x, npc.y - camera.y - 8, (npc.life/npc.maxLife) * npc.size, 4);
     } else {
@@ -2500,7 +2363,6 @@ function draw(){
     if (s.life <= 0) return;
     
     const spriteCoords = animationManager.getSpriteCoordinates(s);
-    
     const drawX = s.x - camera.x - (s.drawWidth - s.size)/2;
     const drawY = s.y - camera.y - (s.drawHeight - s.size)/2;
     
@@ -2517,14 +2379,13 @@ function draw(){
       ctx.fillRect(s.x - camera.x, s.y - camera.y, s.size, s.size);
     }
     
-    // Barra de vida - VERMELHA para magos
     ctx.fillStyle = "black";
     ctx.fillRect(s.x - camera.x, s.y - camera.y - 8, s.size, 4);
     ctx.fillStyle = s.type === 'mage' ? "red" : "cyan";
     ctx.fillRect(s.x - camera.x, s.y - camera.y - 8, (s.life/s.maxLife) * s.size, 4);
   });
   
-  // Desenhar projéteis mágicos dos soldados
+  // Desenhar projéteis mágicos
   ctx.fillStyle = "purple";
   ctx.strokeStyle = "white";
   magicProjectiles.forEach(p => {
@@ -2539,11 +2400,9 @@ function draw(){
     if(e.life <= 0) return;
     
     const spriteCoords = enemyAnimationManager.getSpriteCoordinates(e);
-    
     const drawX = e.x - camera.x - (e.drawWidth - e.size)/2;
     const drawY = e.y - camera.y - (e.drawHeight - e.size)/2;
     
-    // Usar sprite do inimigo REDELFO
     if (enemyImageLoaded) {
       ctx.drawImage(
         enemySprite,
@@ -2553,12 +2412,10 @@ function draw(){
         e.drawWidth, e.drawHeight
       );
     } else {
-      // Fallback se a imagem não carregar
       ctx.fillStyle = "red";
       ctx.fillRect(e.x - camera.x, e.y - camera.y, e.size, e.size);
     }
     
-    // Barra de vida do inimigo
     ctx.fillStyle = "black";
     ctx.fillRect(e.x - camera.x, e.y - camera.y - 8, e.size, 4);
     ctx.fillStyle = "green";
@@ -2593,12 +2450,24 @@ function draw(){
       ctx.beginPath();
       ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size, 0, Math.PI * 2);
       ctx.fill();
+      
+      ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'rgba(100, 150, 255, 0.7)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
     });
   }
   
   // Desenhar espada
   const drawSwordX = sword.x - camera.x;
   const drawSwordY = sword.y - camera.y;
+  
+  if (sword.active) {
+    ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'blue';
+    ctx.shadowBlur = sword.attackMode === 'pursuit' ? 20 : 15;
+  }
   
   if (swordSprite.complete) {
     ctx.save();
@@ -2625,9 +2494,10 @@ function draw(){
     ctx.stroke();
   }
   
+  ctx.shadowBlur = 0;
+  
   // Desenhar jogador
   const playerSpriteCoords = animationManager.getSpriteCoordinates(player);
-  
   const playerDrawX = player.x - camera.x - (player.drawWidth - player.size)/2;
   const playerDrawY = player.y - camera.y - (player.drawHeight - player.size)/2;
   
@@ -2658,9 +2528,61 @@ function draw(){
   updateGameUI();
 }
 
-/* INICIALIZAR POSIÇÃO DA ESPADA */
+// ========== INICIALIZAÇÃO ==========
 sword.x = player.x + Math.cos(sword.angle) * sword.orbitRadius;
 sword.y = player.y + Math.sin(sword.angle) * sword.orbitRadius;
+
+// Criar elemento de log
+const logContainer = document.createElement('div');
+logContainer.id = 'gameLog';
+logContainer.style.cssText = `
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 300px;
+  height: 200px;
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  font-family: 'Arial', sans-serif;
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 2px solid #444;
+  overflow-y: auto;
+  z-index: 1000;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+`;
+
+const logTitle = document.createElement('div');
+logTitle.textContent = '📜 LOG DO JOGO';
+logTitle.style.cssText = `
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #4CAF50;
+  text-align: center;
+  border-bottom: 1px solid #444;
+  padding-bottom: 5px;
+`;
+
+const logContent = document.createElement('div');
+logContent.id = 'logContent';
+logContent.style.cssText = `
+  max-height: 160px;
+  overflow-y: auto;
+`;
+
+logContainer.appendChild(logTitle);
+logContainer.appendChild(logContent);
+document.body.appendChild(logContainer);
+
+// Mensagem inicial
+addLog("🎮 Jogo iniciado!");
+addLog(`⚔️ Dano do player: ${BULLET_DAMAGE} (10x mais forte!)`);
+addLog(`🔮 Dano dos magos: ${MAGE_DAMAGE} (10x mais forte!)`);
+addLog(`🗡️ Dano da espada: ${sword.damage} (10x mais forte!)`);
+addLog("💡 NPCs buscam cura quando com vida baixa");
+addLog("💡 Soldados coletam itens quando não há inimigos");
 
 // Iniciar o jogo
 update();
