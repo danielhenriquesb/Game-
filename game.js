@@ -2587,3 +2587,4 @@ addLog("💡 Soldados coletam itens quando não há inimigos");
 // Iniciar o jogo
 update();
 updateSummonButton();
+
