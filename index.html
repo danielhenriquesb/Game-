@@ -25,6 +25,10 @@
                     <span>👻 Almas:</span>
                     <span id="soulsValue">15</span>
                 </div>
+                <div class="hud-item time-display">
+                    <span>🕐 Hora:</span>
+                    <span id="hourValue">1</span>
+                </div>
             </div>
         </div>
         
@@ -40,6 +44,8 @@
                 <div class="stat-item">👹 Inimigos Vivos: <span id="enemiesAlive">5/200</span></div>
                 <div class="stat-item">🏃 NPCs Vivos: <span id="npcsAlive">0/10</span></div>
                 <div class="stat-item">⏱️ Spawn em: <span id="spawnTimer">10</span>s</div>
+                <div class="stat-item">🕐 Hora Atual: <span id="currentHour">1</span></div>
+                <div class="stat-item">🌙 Fase: <span id="dayPhase">Dia</span></div>
                 <div class="stat-item">👑 BOSS: <span id="bossStatus" style="color:#ff0000">MORTO</span></div>
                 <div class="stat-item boss-health">❤️ Vida do BOSS: <span id="bossHealth">0/0</span></div>
             </div>
@@ -91,7 +97,7 @@
             </div>
         </div>
         
-        <!-- Inventário -->
+        <!-- Inventário do Player -->
         <div id="inventory">
             <div class="inventory-header">
                 <h3>🎒 Inventário</h3>
@@ -101,8 +107,36 @@
                 <!-- Itens serão adicionados aqui -->
             </div>
         </div>
+        
+        <!-- Inventário do Baú -->
+        <div id="chestInventory">
+            <div class="chest-inventory-header">
+                <h3>📦 Baú</h3>
+                <button id="closeChestInventory">X</button>
+            </div>
+            <div class="chest-inventory-container">
+                <div class="chest-section">
+                    <h4>👤 Seu Inventário</h4>
+                    <div id="playerChestContent" class="chest-content">
+                        <!-- Itens do player -->
+                    </div>
+                </div>
+                <div class="chest-section">
+                    <h4>📦 Conteúdo do Baú</h4>
+                    <div id="chestInventoryContent" class="chest-content">
+                        <!-- Itens do baú -->
+                    </div>
+                </div>
+            </div>
+            <div class="chest-instructions">
+                <p>💡 Clique em "Depositar" para mover itens para o baú</p>
+                <p>💡 Clique em "Retirar" para mover itens para seu inventário</p>
+            </div>
+        </div>
     </div>
 
+    <script src="shared.js"></script>
+    <script src="player.js"></script>
     <script src="game.js"></script>
 </body>
 </html>
