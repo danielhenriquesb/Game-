@@ -387,13 +387,80 @@ function createNPCLeader() {
     if(housePos) break;
   }
   
+  // Criar espada para o líder NPC
+  const leaderSword = {
+    active: true,
+    radius: 40,
+    angle: 0,
+    rotationSpeed: 0.06,
+    size: 20,
+    damage: 50000,
+    x: pos.x,
+    y: pos.y,
+    speed: 5,
+    targetEnemy: null,
+    trail: [],
+    trailParticles: 12,
+    hitCooldown: 0,
+    returnDelay: 0,
+    detectionRadius: 400,
+    orbitRadius: 40,
+    orbitSpeed: 0.1,
+    isReturning: false,
+    returnSpeed: 6,
+    attackMode: 'orbit',
+    owner: 'leader',
+    
+    updateAnimation: function() {
+      this.angle += this.rotationSpeed;
+    },
+    
+    findNearestEnemy: function() {
+      if (boss) {
+        const dx = boss.x - this.x;
+        const dy = boss.y - this.y;
+        const d = Math.hypot(dx, dy);
+        if (d < this.detectionRadius) return boss;
+      }
+      
+      let nearest = null;
+      let minDist = Infinity;
+      
+      enemies.forEach(e => {
+        if (e.life <= 0) return;
+        
+        const dx = e.x - this.x;
+        const dy = e.y - this.y;
+        const d = Math.hypot(dx, dy);
+        
+        if (d < this.detectionRadius && d < minDist) {
+          minDist = d;
+          nearest = e;
+        }
+      });
+      
+      return nearest;
+    },
+    
+    moveToTarget: function(targetX, targetY) {
+      const dx = targetX - this.x;
+      const dy = targetY - this.y;
+      const distance = Math.hypot(dx, dy);
+      
+      if (distance > 0) {
+        this.x += (dx / distance) * this.speed;
+        this.y += (dy / distance) * this.speed;
+      }
+    }
+  };
+  
   npcLeader = {
     x: pos.x,
     y: pos.y,
     size: 35,
     drawWidth: 150,
     drawHeight: 175,
-    speed: 2.0, // 50% mais rápido
+    speed: 2.0,
     life: 150,
     maxLife: 150,
     hasPower: true,
@@ -419,12 +486,13 @@ function createNPCLeader() {
       mageSouls: 0
     },
     kills: 0,
-    attackMultiplier: 1.5, // 50% mais forte
-    defenseMultiplier: 0.2, // 80% de defesa (recebe apenas 20% do dano)
+    attackMultiplier: 1.5,
+    defenseMultiplier: 0.2,
     baseDamage: 200,
     baseDefense: 0.2,
     healHerbsCollected: 0,
     healHerbsThreshold: 3,
+    sword: leaderSword,
     
     findNearestEnemy: function() {
       if (boss) {
@@ -469,7 +537,7 @@ function createNPCLeader() {
           vx: (dx / distance) * 5,
           vy: (dy / distance) * 5,
           radius: 15,
-          damage: 99999, // Dano praticamente infinito
+          damage: 99999,
           owner: 'leader',
           color: 'orange',
           trail: []
@@ -479,37 +547,88 @@ function createNPCLeader() {
       }
     },
     
-    swordAttack: function() {
-      if (this.swordAttackCooldown <= 0) {
-        this.swordAttackCooldown = NPC_LEADER_COOLDOWN;
-        this.isAttacking = true;
+    updateSword: function() {
+      if (!this.sword) return;
+      
+      const leaderSword = this.sword;
+      leaderSword.updateAnimation();
+      
+      // Se a espada estiver retornando
+      if (leaderSword.isReturning) {
+        const dx = this.x - leaderSword.x;
+        const dy = this.y - leaderSword.y;
+        const distance = Math.hypot(dx, dy);
         
-        // Criar projétil de espada especial
-        const nearestEnemy = this.findNearestEnemy();
-        if (nearestEnemy) {
-          const dx = nearestEnemy.x - this.x;
-          const dy = nearestEnemy.y - this.y;
-          const distance = Math.hypot(dx, dy) || 1;
-          
-          const swordProjectile = {
-            x: this.x + this.size/2,
-            y: this.y + this.size/2,
-            targetX: nearestEnemy.x,
-            targetY: nearestEnemy.y,
-            vx: (dx / distance) * 8,
-            vy: (dy / distance) * 8,
-            radius: 20,
-            damage: 5000 * this.attackMultiplier,
-            owner: 'leader',
-            type: 'sword',
-            color: 'orange',
-            trail: [],
-            life: 60
-          };
-          
-          npcMagicProjectiles.push(swordProjectile);
-          addLog("Líder NPC usou espada especial!");
+        if (distance < leaderSword.orbitRadius) {
+          leaderSword.isReturning = false;
+          leaderSword.attackMode = 'orbit';
+          leaderSword.x = this.x + Math.cos(leaderSword.angle) * leaderSword.orbitRadius;
+          leaderSword.y = this.y + Math.sin(leaderSword.angle) * leaderSword.orbitRadius;
+        } else {
+          leaderSword.x += (dx / distance) * leaderSword.returnSpeed;
+          leaderSword.y += (dy / distance) * leaderSword.returnSpeed;
         }
+        
+        addLeaderSwordTrail(leaderSword);
+        return;
+      }
+      
+      // Encontrar inimigo mais próximo
+      if (!leaderSword.targetEnemy || (leaderSword.targetEnemy.life <= 0 && leaderSword.targetEnemy !== boss)) {
+        leaderSword.targetEnemy = leaderSword.findNearestEnemy();
+        
+        if (!leaderSword.targetEnemy) {
+          if (leaderSword.attackMode === 'pursuit') {
+            leaderSword.isReturning = true;
+          } else {
+            leaderSword.x = this.x + Math.cos(leaderSword.angle) * leaderSword.orbitRadius;
+            leaderSword.y = this.y + Math.sin(leaderSword.angle) * leaderSword.orbitRadius;
+            leaderSword.angle += leaderSword.orbitSpeed;
+          }
+          addLeaderSwordTrail(leaderSword);
+          return;
+        }
+        
+        leaderSword.attackMode = 'pursuit';
+      }
+      
+      // Atacar inimigo
+      if (leaderSword.targetEnemy && (leaderSword.targetEnemy.life > 0 || leaderSword.targetEnemy === boss)) {
+        const dx = leaderSword.targetEnemy.x - leaderSword.x;
+        const dy = leaderSword.targetEnemy.y - leaderSword.y;
+        const distance = Math.hypot(dx, dy);
+        
+        if (distance < 10) {
+          const wasAlive = leaderSword.targetEnemy.life > 0;
+          leaderSword.targetEnemy.life -= leaderSword.damage;
+          
+          if (wasAlive && leaderSword.targetEnemy.life <= 0 && leaderSword.targetEnemy !== boss) {
+            enemiesKilled++;
+            leaderSword.targetEnemy.wasAlive = false;
+            dropLoot(leaderSword.targetEnemy.x, leaderSword.targetEnemy.y);
+            addLog(`Espada do Líder eliminou inimigo!`);
+          }
+          
+          leaderSword.hitCooldown = 8;
+          leaderSword.targetEnemy = leaderSword.findNearestEnemy();
+          
+          if (!leaderSword.targetEnemy) {
+            leaderSword.isReturning = true;
+          }
+        } else {
+          leaderSword.moveToTarget(leaderSword.targetEnemy.x, leaderSword.targetEnemy.y);
+        }
+      } else {
+        leaderSword.targetEnemy = leaderSword.findNearestEnemy();
+        if (!leaderSword.targetEnemy) {
+          leaderSword.isReturning = true;
+        }
+      }
+      
+      addLeaderSwordTrail(leaderSword);
+      
+      if (leaderSword.hitCooldown > 0) {
+        leaderSword.hitCooldown--;
       }
     },
     
@@ -592,7 +711,7 @@ function createNPCLeader() {
     increasePower: function() {
       if (this.kills % 5 === 0) {
         this.attackMultiplier *= 1.2;
-        this.defenseMultiplier *= 0.9; // Diminui para manter o equilíbrio
+        this.defenseMultiplier *= 0.9;
         addLog(`Líder NPC aumentou poder! Ataque: x${this.attackMultiplier.toFixed(1)}`);
       }
     },
@@ -609,6 +728,29 @@ function createNPCLeader() {
       return false;
     }
   };
+}
+
+function addLeaderSwordTrail(leaderSword) {
+  if (!leaderSword.active) return;
+  
+  leaderSword.trail.unshift({
+    x: leaderSword.x,
+    y: leaderSword.y,
+    life: 20,
+    maxLife: 20,
+    size: leaderSword.attackMode === 'pursuit' ? 3 : 2,
+    color: 'rgba(255, 165, 0, 0.7)'
+  });
+  
+  if (leaderSword.trail.length > leaderSword.trailParticles) {
+    leaderSword.trail.pop();
+  }
+  
+  leaderSword.trail.forEach(particle => {
+    particle.life--;
+  });
+  
+  leaderSword.trail = leaderSword.trail.filter(p => p.life > 0);
 }
 
 // ========== CONTROLES ==========
@@ -629,8 +771,9 @@ document.addEventListener('DOMContentLoaded', function() {
   if (bossSpawnBtn) bossSpawnBtn.addEventListener("pointerdown", toggleBoss);
   if (swordBtn) swordBtn.addEventListener("pointerdown", toggleSword);
   if (summonBtn) summonBtn.addEventListener("pointerdown", toggleMassSummon);
-  if (attackBtn) attackBtn.addEventListener("pointerdown", shoot);
-  if (openInventoryBtn) openInventoryBtn.addEventListener("click", openInventory);
+  if (attackBtn) attackBtn.addEventListener("pointerdown", openInventory); // Invertido com inventário
+  if (openInventoryBtn) openInventoryBtn.addEventListener("pointerdown", shoot); // Invertido com atirar
+  
   if (closeInventoryBtn) closeInventoryBtn.addEventListener("click", closeInventory);
   if (closeChestInventoryBtn) closeChestInventoryBtn.addEventListener("click", closeChest);
   
@@ -639,7 +782,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if(e.code === "Space") shoot();
   });
   
-  // Configurar botão de status
+  // Configurar botão de status (movido para o centro)
   const statusBtn = document.getElementById('statusBtn');
   const statusPanel = document.getElementById('statusPanel');
   
@@ -1159,6 +1302,11 @@ function updateNPCLeader(leader) {
       updateLeaderHome(leader);
       break;
   }
+  
+  // Atualizar espada do líder
+  if (leader.sword) {
+    leader.updateSword();
+  }
 }
 
 function updateLeaderCombat(leader) {
@@ -1183,10 +1331,6 @@ function updateLeaderCombat(leader) {
     }
     
     // Ataques especiais
-    if (distance < 200 && leader.swordAttackCooldown <= 0) {
-      leader.swordAttack();
-    }
-    
     if (distance < 250 && leader.magicCooldown <= 0) {
       leader.magicAttack(nearestEnemy);
     }
@@ -1234,10 +1378,6 @@ function updateLeaderCombat(leader) {
     if (leader.magicCooldown <= 30) leader.isAttacking = false;
   }
   
-  if (leader.swordAttackCooldown > 0) {
-    leader.swordAttackCooldown--;
-  }
-  
   if (leader.attackCooldown > 0) leader.attackCooldown--;
   
   animationManager.updateAnimation(leader);
@@ -1261,6 +1401,12 @@ function updateNPCCollect(npc) {
     collectNPCItem(npc, nearestItem);
   } else {
     npc.moving = false;
+  }
+  
+  // Atualizar animação para estado de coleta
+  npc.isAttacking = false;
+  if (npc.moving) {
+    animationManager.updateAnimation(npc);
   }
 }
 
@@ -1337,6 +1483,12 @@ function updateNPCReturnHome(npc) {
     // Depositar itens no baú
     npc.depositItemsToChest();
   }
+  
+  // Atualizar animação para estado de retorno
+  npc.isAttacking = false;
+  if (npc.moving) {
+    animationManager.updateAnimation(npc);
+  }
 }
 
 function updateNPCHome(npc) {
@@ -1344,6 +1496,7 @@ function updateNPCHome(npc) {
   npc.moving = false;
   npc.x = npc.housePosition.x;
   npc.y = npc.housePosition.y;
+  npc.isAttacking = false;
 }
 
 // Funções do líder para coleta, retorno e casa
@@ -1363,6 +1516,12 @@ function updateLeaderCollect(leader) {
     collectLeaderItem(leader, nearestItem);
   } else {
     leader.moving = false;
+  }
+  
+  // Atualizar animação para estado de coleta
+  leader.isAttacking = false;
+  if (leader.moving) {
+    animationManager.updateAnimation(leader);
   }
 }
 
@@ -1436,12 +1595,19 @@ function updateLeaderReturnHome(leader) {
     leader.useHealHerb();
     leader.depositItemsToChest();
   }
+  
+  // Atualizar animação para estado de retorno
+  leader.isAttacking = false;
+  if (leader.moving) {
+    animationManager.updateAnimation(leader);
+  }
 }
 
 function updateLeaderHome(leader) {
   leader.moving = false;
   leader.x = leader.housePosition.x;
   leader.y = leader.housePosition.y;
+  leader.isAttacking = false;
 }
 
 // ========== ATUALIZAÇÃO DOS PROJÉTEIS NPC ==========
@@ -2096,80 +2262,17 @@ function draw(){
   // Desenhar boss
   drawBoss();
   
-  // Desenhar rastro da espada
-  if (sword.active && sword.trail.length > 1) {
-    for (let i = 0; i < sword.trail.length - 1; i++) {
-      const current = sword.trail[i];
-      const next = sword.trail[i + 1];
-      
-      const alpha = current.life / current.maxLife * 0.5;
-      const color = current.color || 'rgba(100, 150, 255, 0.5)';
-      
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(current.x - camera.x, current.y - camera.y);
-      ctx.lineTo(next.x - camera.x, next.y - camera.y);
-      ctx.stroke();
-    }
-    
-    sword.trail.forEach(particle => {
-      const alpha = particle.life / particle.maxLife;
-      const color = particle.color || 'rgba(100, 150, 255, 0.5)';
-      
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size, 0, Math.PI * 2);
-      ctx.fill();
-      
-      ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'rgba(100, 150, 255, 0.7)';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    });
-  }
+  // Desenhar espada do jogador
+  drawSword();
   
-  // Desenhar espada
-  const drawSwordX = sword.x - camera.x;
-  const drawSwordY = sword.y - camera.y;
-  
-  if (sword.active) {
-    ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'blue';
-    ctx.shadowBlur = sword.attackMode === 'pursuit' ? 20 : 15;
-  }
-  
-  if (swordSprite) {
-    ctx.save();
-    ctx.translate(drawSwordX, drawSwordY);
-    ctx.rotate(sword.angle + Math.PI / 4);
-    ctx.drawImage(swordSprite, -sword.size/2, -sword.size/2, sword.size, sword.size);
-    ctx.restore();
-  } else {
-    ctx.fillStyle = sword.active ? 
-      (sword.attackMode === 'pursuit' ? 'cyan' : 'blue') : 
-      'gray';
-    
-    ctx.beginPath();
-    ctx.arc(drawSwordX, drawSwordY, sword.size/2, 0, Math.PI * 2);
-    ctx.fill();
-    
-    ctx.strokeStyle = 'white';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(drawSwordX - sword.size/3, drawSwordY);
-    ctx.lineTo(drawSwordX + sword.size/3, drawSwordY);
-    ctx.moveTo(drawSwordX, drawSwordY - sword.size/3);
-    ctx.lineTo(drawSwordX, drawSwordY + sword.size/3);
-    ctx.stroke();
-  }
-  
-  ctx.shadowBlur = 0;
-  
-  // Desenhar NPC líder
+  // Desenhar NPC líder e sua espada
   if (npcLeader && npcLeader.life > 0) {
     drawLeaderNPC(npcLeader);
+    
+    // Desenhar espada do líder
+    if (npcLeader.sword) {
+      drawLeaderSword(npcLeader.sword);
+    }
   }
   
   // Desenhar projéteis do líder com cores especiais
@@ -2195,34 +2298,14 @@ function draw(){
         p.x - camera.x, p.y - camera.y, p.radius
       );
       
-      if (p.type === 'sword') {
-        gradient.addColorStop(0, '#FFA500');
-        gradient.addColorStop(0.5, '#FF8C00');
-        gradient.addColorStop(1, 'transparent');
-        
-        // Desenhar espada
-        if (swordSprite) {
-          ctx.save();
-          ctx.translate(p.x - camera.x, p.y - camera.y);
-          ctx.rotate(Math.atan2(p.vy, p.vx));
-          ctx.drawImage(swordSprite, -20, -20, 40, 40);
-          ctx.restore();
-        } else {
-          ctx.fillStyle = gradient;
-          ctx.beginPath();
-          ctx.arc(p.x - camera.x, p.y - camera.y, p.radius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      } else {
-        gradient.addColorStop(0, '#FF4500');
-        gradient.addColorStop(0.7, '#FF0000');
-        gradient.addColorStop(1, 'transparent');
-        
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(p.x - camera.x, p.y - camera.y, p.radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      gradient.addColorStop(0, '#FF4500');
+      gradient.addColorStop(0.7, '#FF0000');
+      gradient.addColorStop(1, 'transparent');
+      
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(p.x - camera.x, p.y - camera.y, p.radius, 0, Math.PI * 2);
+      ctx.fill();
       
       // Brilho
       ctx.shadowColor = 'orange';
@@ -2267,6 +2350,79 @@ function draw(){
   drawClock();
 }
 
+function drawSword() {
+  // Desenhar rastro da espada do jogador
+  if (sword.active && sword.trail.length > 1) {
+    for (let i = 0; i < sword.trail.length - 1; i++) {
+      const current = sword.trail[i];
+      const next = sword.trail[i + 1];
+      
+      const alpha = current.life / current.maxLife * 0.5;
+      const color = current.color || 'rgba(100, 150, 255, 0.5)';
+      
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(current.x - camera.x, current.y - camera.y);
+      ctx.lineTo(next.x - camera.x, next.y - camera.y);
+      ctx.stroke();
+    }
+    
+    sword.trail.forEach(particle => {
+      const alpha = particle.life / particle.maxLife;
+      const color = particle.color || 'rgba(100, 150, 255, 0.5)';
+      
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'rgba(100, 150, 255, 0.7)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+  }
+  
+  // Desenhar espada do jogador
+  const drawSwordX = sword.x - camera.x;
+  const drawSwordY = sword.y - camera.y;
+  
+  if (sword.active) {
+    ctx.shadowColor = sword.attackMode === 'pursuit' ? 'cyan' : 'blue';
+    ctx.shadowBlur = sword.attackMode === 'pursuit' ? 20 : 15;
+  }
+  
+  if (swordSprite) {
+    ctx.save();
+    ctx.translate(drawSwordX, drawSwordY);
+    ctx.rotate(sword.angle + Math.PI / 4);
+    ctx.drawImage(swordSprite, -sword.size/2, -sword.size/2, sword.size, sword.size);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = sword.active ? 
+      (sword.attackMode === 'pursuit' ? 'cyan' : 'blue') : 
+      'gray';
+    
+    ctx.beginPath();
+    ctx.arc(drawSwordX, drawSwordY, sword.size/2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(drawSwordX - sword.size/3, drawSwordY);
+    ctx.lineTo(drawSwordX + sword.size/3, drawSwordY);
+    ctx.moveTo(drawSwordX, drawSwordY - sword.size/3);
+    ctx.lineTo(drawSwordX, drawSwordY + sword.size/3);
+    ctx.stroke();
+  }
+  
+  ctx.shadowBlur = 0;
+}
+
 // ========== DESENHO DO NPC LÍDER ==========
 function drawLeaderNPC(leader) {
   if (!leader || leader.life <= 0) return;
@@ -2299,13 +2455,6 @@ function drawLeaderNPC(leader) {
   ctx.fillStyle = "orange";
   ctx.fillRect(leader.x - camera.x, leader.y - camera.y - 12, (leader.life/leader.maxLife) * leader.size, 6);
   
-  // Indicador de cooldown da espada
-  if (leader.swordAttackCooldown > 0) {
-    const cooldownPercent = leader.swordAttackCooldown / NPC_LEADER_COOLDOWN;
-    ctx.fillStyle = 'rgba(255, 165, 0, 0.5)';
-    ctx.fillRect(leader.x - camera.x, leader.y - camera.y - 18, leader.size * (1 - cooldownPercent), 3);
-  }
-  
   // Indicador de líder
   ctx.fillStyle = 'gold';
   ctx.font = '12px Arial';
@@ -2321,6 +2470,85 @@ function drawLeaderNPC(leader) {
   ctx.fillStyle = '#FFA500';
   ctx.font = '10px Arial';
   ctx.fillText(`Poder: ${Math.round(leader.attackMultiplier * 100)}%`, leader.x - camera.x + leader.size/2, leader.y - camera.y - 45);
+}
+
+function drawLeaderSword(leaderSword) {
+  if (!leaderSword.active) return;
+  
+  // Desenhar rastro da espada do líder
+  if (leaderSword.trail.length > 1) {
+    for (let i = 0; i < leaderSword.trail.length - 1; i++) {
+      const current = leaderSword.trail[i];
+      const next = leaderSword.trail[i + 1];
+      
+      const alpha = current.life / current.maxLife * 0.5;
+      const color = current.color || 'rgba(255, 165, 0, 0.5)';
+      
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(current.x - camera.x, current.y - camera.y);
+      ctx.lineTo(next.x - camera.x, next.y - camera.y);
+      ctx.stroke();
+    }
+    
+    leaderSword.trail.forEach(particle => {
+      const alpha = particle.life / particle.maxLife;
+      const color = particle.color || 'rgba(255, 165, 0, 0.5)';
+      
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.shadowColor = leaderSword.attackMode === 'pursuit' ? 'orange' : 'rgba(255, 165, 0, 0.7)';
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(particle.x - camera.x, particle.y - camera.y, particle.size * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+  }
+  
+  // Desenhar espada do líder
+  const drawSwordX = leaderSword.x - camera.x;
+  const drawSwordY = leaderSword.y - camera.y;
+  
+  ctx.shadowColor = leaderSword.attackMode === 'pursuit' ? 'orange' : 'rgba(255, 165, 0, 0.8)';
+  ctx.shadowBlur = leaderSword.attackMode === 'pursuit' ? 15 : 10;
+  
+  if (swordSprite) {
+    ctx.save();
+    ctx.translate(drawSwordX, drawSwordY);
+    ctx.rotate(leaderSword.angle + Math.PI / 4);
+    
+    // Aplicar filtro laranja
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 165, 0, 0.7)';
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillRect(-leaderSword.size/2, -leaderSword.size/2, leaderSword.size, leaderSword.size);
+    ctx.restore();
+    
+    ctx.drawImage(swordSprite, -leaderSword.size/2, -leaderSword.size/2, leaderSword.size, leaderSword.size);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = leaderSword.attackMode === 'pursuit' ? 'orange' : 'rgba(255, 165, 0, 0.8)';
+    
+    ctx.beginPath();
+    ctx.arc(drawSwordX, drawSwordY, leaderSword.size/2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(drawSwordX - leaderSword.size/3, drawSwordY);
+    ctx.lineTo(drawSwordX + leaderSword.size/3, drawSwordY);
+    ctx.moveTo(drawSwordX, drawSwordY - leaderSword.size/3);
+    ctx.lineTo(drawSwordX, drawSwordY + leaderSword.size/3);
+    ctx.stroke();
+  }
+  
+  ctx.shadowBlur = 0;
 }
 
 function drawClock() {
